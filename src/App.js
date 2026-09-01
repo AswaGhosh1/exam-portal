@@ -445,47 +445,48 @@ function LoginScreen({ settings, adminCreds, facultyAccounts, students, onLogin,
     }
   }
 
-  function submitRegular() {
-    if (!idField.trim() || !password.trim()) {
-      showToast("Enter your login details.", "error");
-      return;
-    }
+ function submitRegular() {
+  if (!idField.trim() || !password.trim()) {
+    showToast("Enter your login details.", "error");
+    return;
+  }
 
-    if (role === "faculty") {
-      const acc = facultyAccounts.find(
-        (f) => f.username.toLowerCase() === idField.trim().toLowerCase() && f.password === password
-      );
-      if (acc) {
-        onLogin({ role: "faculty", id: acc.id, name: acc.name });
-        showToast(`Welcome ${acc.name}!`, "success");
+  if (role === "faculty") {
+    const acc = facultyAccounts.find(
+      (f) => f.username.toLowerCase() === idField.trim().toLowerCase() && f.password === password
+    );
+    if (acc) {
+      onLogin({ role: "faculty", id: acc.id, name: acc.name });
+      showToast(`Welcome ${acc.name}!`, "success");
+    } else {
+      showToast("Incorrect faculty username or password.", "error");
+      setPassword('');
+    }
+  } else {
+    // Student login - using username instead of email
+    const student = students.find(
+      (st) => st.username.toLowerCase() === idField.trim().toLowerCase()
+    );
+    
+    if (student) {
+      if (student.password === password) {
+        onLogin({ 
+          role: "student", 
+          id: student.id, 
+          name: student.name, 
+          username: student.username 
+        });
+        showToast(`Welcome ${student.name}!`, "success");
       } else {
-        showToast("Incorrect faculty username or password.", "error");
+        showToast("Incorrect password. Please try again.", "error");
         setPassword('');
       }
     } else {
-      const student = students.find(
-        (st) => st.email.toLowerCase() === idField.trim().toLowerCase()
-      );
-      
-      if (student) {
-        if (student.password === password) {
-          onLogin({ 
-            role: "student", 
-            id: student.id, 
-            name: student.name, 
-            email: student.email 
-          });
-          showToast(`Welcome ${student.name}!`, "success");
-        } else {
-          showToast("Incorrect password. Please try again.", "error");
-          setPassword('');
-        }
-      } else {
-        showToast("No student found with this email. Please check with your faculty.", "error");
-        setPassword('');
-      }
+      showToast("No student found with this username. Please check with your faculty.", "error");
+      setPassword('');
     }
   }
+}
 
   function submitAdmin() {
     if (idField.trim() === adminCreds.username && password === adminCreds.password) {
@@ -582,14 +583,14 @@ function LoginScreen({ settings, adminCreds, facultyAccounts, students, onLogin,
           </div>
         </div>
 
-        <div style={{ marginBottom: 12 }}>
-          <label className="field-label">{role === "student" ? "Registered email" : "Username"}</label>
-          <input 
-            value={idField} 
-            onChange={(e) => setIdField(e.target.value)} 
-            placeholder={role === "student" ? "you@example.com" : "username"} 
-          />
-        </div>
+       <div style={{ marginBottom: 12 }}>
+  <label className="field-label">{role === "student" ? "Username" : "Username"}</label>
+  <input 
+    value={idField} 
+    onChange={(e) => setIdField(e.target.value)} 
+    placeholder={role === "student" ? "Enter your username" : "Enter username"} 
+  />
+</div>
         <div style={{ marginBottom: 18 }}>
           <label className="field-label">Password</label>
           <input 
@@ -694,40 +695,60 @@ function Dashboard({ students, exams, notes, attendance, results, currentUser, s
   );
 }
 
-/* ---------------------------------- Students ---------------------------------- */
+//* ---------------------------------- Students ---------------------------------- */
 
 function StudentsTab({ students, setStudents, showToast }) {
   const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState(genPin());
   const [search, setSearch] = useState("");
 
   function addStudent() {
-    if (!name.trim() || !email.trim() || !phone.trim() || !password.trim()) {
-      showToast("Fill in name, email, phone and a password.", "error"); return;
+    if (!name.trim() || !username.trim() || !phone.trim() || !password.trim()) {
+      showToast("Fill in name, username, phone and a password.", "error"); 
+      return; 
     }
-    if (!/^\S+@\S+\.\S+$/.test(email.trim())) { showToast("Enter a valid email address.", "error"); return; }
-    if (students.some((s) => s.email.toLowerCase() === email.trim().toLowerCase())) { showToast("A student with this email already exists.", "error"); return; }
-    const rec = { id: uid(), name: name.trim(), email: email.trim(), phone: phone.trim(), password: password.trim(), addedAt: new Date().toISOString() };
+    if (students.some((s) => s.username.toLowerCase() === username.trim().toLowerCase())) { 
+      showToast("A student with this username already exists.", "error"); 
+      return; 
+    }
+    const rec = { 
+      id: uid(), 
+      name: name.trim(), 
+      username: username.trim().toLowerCase(), 
+      phone: phone.trim(), 
+      password: password.trim(), 
+      addedAt: new Date().toISOString() 
+    };
     setStudents([...students, rec]);
-    setName(""); setEmail(""); setPhone(""); setPassword(genPin());
-    showToast(`${rec.name} added — share their login (email + password) with them.`);
+    setName(""); 
+    setUsername(""); 
+    setPhone(""); 
+    setPassword(genPin());
+    showToast(`${rec.name} added — share their login (username + password) with them.`);
   }
-  function removeStudent(id) { setStudents(students.filter((s) => s.id !== id)); showToast("Student removed."); }
+  
+  function removeStudent(id) { 
+    setStudents(students.filter((s) => s.id !== id)); 
+    showToast("Student removed."); 
+  }
 
-  const filtered = students.filter((s) => s.name.toLowerCase().includes(search.toLowerCase()) || s.email.toLowerCase().includes(search.toLowerCase()));
+  const filtered = students.filter((s) => 
+    s.name.toLowerCase().includes(search.toLowerCase()) || 
+    s.username.toLowerCase().includes(search.toLowerCase())
+  );
 
   return (
     <div>
       <div className="page-title font-display">Students</div>
-      <div className="page-sub">Add students with a login so they can be notified, sign in, and take exams.</div>
+      <div className="page-sub">Add students with a login so they can sign in and take exams.</div>
 
       <div className="card" style={{ marginBottom: 22 }}>
         <div style={{ fontWeight: 600, marginBottom: 14 }}>Add a student</div>
-        <div style={{ display: "grid", gridTemplateColumns: "1.1fr 1.2fr 0.9fr 0.9fr auto", gap: 12, alignItems: "end" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 0.9fr 0.9fr auto", gap: 12, alignItems: "end" }}>
           <div><label className="field-label">Full name</label><input value={name} onChange={(e) => setName(e.target.value)} placeholder="Anjali Nair" /></div>
-          <div><label className="field-label">Email address</label><input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="anjali@example.com" /></div>
+          <div><label className="field-label">Username</label><input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="anjali123" /></div>
           <div><label className="field-label">Phone number</label><input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+91 98765 43210" /></div>
           <div>
             <label className="field-label">Login password</label>
@@ -749,12 +770,12 @@ function StudentsTab({ students, setStudents, showToast }) {
           <div className="empty"><Users size={30} /><div>No students found. Add your first student above.</div></div>
         ) : (
           <table>
-            <thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Password</th><th></th></tr></thead>
+            <thead><tr><th>Name</th><th>Username</th><th>Phone</th><th>Password</th><th></th></tr></thead>
             <tbody>
               {filtered.map((s) => (
                 <tr key={s.id}>
                   <td style={{ fontWeight: 600 }}>{s.name}</td>
-                  <td>{s.email}</td>
+                  <td className="font-mono">{s.username}</td>
                   <td className="font-mono">{s.phone}</td>
                   <td className="font-mono">{s.password}</td>
                   <td><button className="btn btn-danger btn-sm" onClick={() => removeStudent(s.id)}><Trash2 size={13} /></button></td>
