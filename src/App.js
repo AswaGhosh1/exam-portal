@@ -1988,7 +1988,6 @@ function ResultsTab({ exams, results, currentUser }) {
   // Get questions for an exam
   const getQuestionsForExam = (exam) => {
     if (!exam) return [];
-    // Return placeholder questions if no extracted questions available
     return Array.from({ length: exam.totalQuestions || 0 }, (_, i) => ({
       id: i,
       text: `Question ${i + 1}`,
@@ -2066,29 +2065,29 @@ function ResultsTab({ exams, results, currentUser }) {
             
             return (
               <div key={index} className="card-plain" style={{ marginBottom: 12 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
                   <div style={{ fontWeight: 600, fontSize: 15 }}>
                     Question {index + 1}
                     {userAnswer !== undefined ? (
                       isCorrect ? (
-                        <span style={{ marginLeft: 10, fontSize: 14, color: "var(--success)" }}>✅</span>
+                        <span style={{ marginLeft: 10, fontSize: 14, color: "var(--success)" }}>✅ Correct</span>
                       ) : (
-                        <span style={{ marginLeft: 10, fontSize: 14, color: "var(--danger)" }}>❌</span>
+                        <span style={{ marginLeft: 10, fontSize: 14, color: "var(--danger)" }}>❌ Wrong</span>
                       )
                     ) : (
                       <span style={{ marginLeft: 10, fontSize: 12, color: "var(--muted)" }}>(Not Answered)</span>
                     )}
                   </div>
-                  <div>
+                  <div style={{ display: "flex", gap: 16, fontSize: 13, flexWrap: "wrap" }}>
                     {userAnswer !== undefined && (
-                      <span style={{ fontSize: 13 }}>
+                      <span>
                         Your Answer: <strong style={{ color: isCorrect ? "var(--success)" : "var(--danger)" }}>
                           {LETTERS[userAnswer] || userAnswer}
                         </strong>
                       </span>
                     )}
                     {correctAnswer !== undefined && (
-                      <span style={{ fontSize: 13, marginLeft: 16 }}>
+                      <span>
                         Correct Answer: <strong style={{ color: "var(--success)" }}>
                           {LETTERS[correctAnswer] || correctAnswer}
                         </strong>
@@ -2209,8 +2208,17 @@ function ResultsTab({ exams, results, currentUser }) {
                         <button 
                           className="btn btn-primary btn-sm" 
                           onClick={() => handleViewDetails(r)}
+                          style={{ 
+                            background: "var(--primary)", 
+                            color: "#fff", 
+                            padding: "4px 12px",
+                            borderRadius: "6px",
+                            border: "none",
+                            cursor: "pointer",
+                            fontSize: "12px"
+                          }}
                         >
-                          <BookOpen size={13} /> Review Answers
+                          <BookOpen size={13} style={{ marginRight: 4 }} /> Review Answers
                         </button>
                       </td>
                     )}
