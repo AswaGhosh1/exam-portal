@@ -1414,42 +1414,42 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
   }
 
   function submitExam() {
-    if (finished) return;
-    let score = 0;
-    const questionResults = [];
-    
-    for (let i = 0; i < exam.totalQuestions; i++) {
-      const isCorrect = answers[i] === exam.correctAnswers[i];
-      if (isCorrect) score += 1;
-      questionResults.push({
-        questionIndex: i,
-        userAnswer: answers[i],
-        correctAnswer: exam.correctAnswers[i],
-        isCorrect: isCorrect
-      });
-    }
-    
-    const rec = { 
-      id: uid(), 
-      examId: exam.id, 
-      examTitle: exam.title, 
-      studentId: currentUser.id, 
-      studentName: currentUser.name, 
-      score, 
-      total: exam.totalQuestions, 
-      submittedAt: new Date().toISOString(),
-      questionResults: questionResults // Store individual question results
-    };
-    const updated = [...results, rec];
-    setResults(updated);
-    saveKey(STORAGE_KEYS.results, updated);
-    setFinished(rec); 
-    setStarted(false);
-    setShowConfirmFinish(false);
-    setShowReview(true);
-    setReviewIndex(0);
-    showToast(`Submitted! Score: ${score}/${exam.totalQuestions}`);
+  if (finished) return;
+  let score = 0;
+  const questionResults = [];
+  
+  for (let i = 0; i < exam.totalQuestions; i++) {
+    const isCorrect = answers[i] === exam.correctAnswers[i];
+    if (isCorrect) score += 1;
+    questionResults.push({
+      questionIndex: i,
+      userAnswer: answers[i] !== undefined ? answers[i] : null,
+      correctAnswer: exam.correctAnswers[i],
+      isCorrect: isCorrect
+    });
   }
+  
+  const rec = { 
+    id: uid(), 
+    examId: exam.id, 
+    examTitle: exam.title, 
+    studentId: currentUser.id, 
+    studentName: currentUser.name, 
+    score, 
+    total: exam.totalQuestions, 
+    submittedAt: new Date().toISOString(),
+    questionResults: questionResults // Store individual question results
+  };
+  const updated = [...results, rec];
+  setResults(updated);
+  saveKey(STORAGE_KEYS.results, updated);
+  setFinished(rec); 
+  setStarted(false);
+  setShowConfirmFinish(false);
+  setShowReview(true);
+  setReviewIndex(0);
+  showToast(`Submitted! Score: ${score}/${exam.totalQuestions}`);
+}
 
   function finishExam() {
     setShowConfirmFinish(true);
@@ -1970,6 +1970,8 @@ function AttendanceTab({ students, attendance, setAttendance, showToast }) {
 function ResultsTab({ exams, results, currentUser }) {
   const [examId, setExamId] = useState("all");
   const [search, setSearch] = useState("");
+  const [selectedResult, setSelectedResult] = useState(null);
+  const [showDetailedView, setShowDetailedView] = useState(false);
   const isStudent = currentUser.role === "student";
 
   const filtered = results
@@ -1978,34 +1980,240 @@ function ResultsTab({ exams, results, currentUser }) {
     .filter((r) => isStudent || r.studentName.toLowerCase().includes(search.toLowerCase()))
     .sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
 
+  // Get exam details for a result
+  const getExamForResult = (result) => {
+    return exams.find(e => e.id === result.examId);
+  };
+
+  // Get questions for an exam
+  const getQuestionsForExam = (exam) => {
+    if (!exam) return [];
+    // Return placeholder questions if no extracted questions available
+    return Array.from({ length: exam.totalQuestions || 0 }, (_, i) => ({
+      id: i,
+      text: `Question ${i + 1}`,
+      options: ['A', 'B', 'C', 'D']
+    }));
+  };
+
+  const handleViewDetails = (result) => {
+    setSelectedResult(result);
+    setShowDetailedView(true);
+  };
+
+  const closeDetailedView = () => {
+    setShowDetailedView(false);
+    setSelectedResult(null);
+  };
+
+  // Detailed view of correct answers
+  if (showDetailedView && selectedResult) {
+    const exam = getExamForResult(selectedResult);
+    const questions = getQuestionsForExam(exam);
+    const totalQuestions = selectedResult.total || questions.length;
+    const correctAnswers = selectedResult.questionResults || [];
+    
+    return (
+      <div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <div>
+            <div className="page-title font-display" style={{ fontSize: 22 }}>Answer Review</div>
+            <div className="page-sub">{selectedResult.examTitle}</div>
+          </div>
+          <button className="btn btn-outline" onClick={closeDetailedView}>
+            <ChevronLeft size={15} /> Back to Results
+          </button>
+        </div>
+
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div style={{ display: "flex", gap: 30, flexWrap: "wrap" }}>
+            <div>
+              <div style={{ fontSize: 12, color: "var(--muted)" }}>Score</div>
+              <div style={{ fontSize: 20, fontWeight: 700 }}>{selectedResult.score} / {selectedResult.total}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 12, color: "var(--muted)" }}>Percentage</div>
+              <div style={{ fontSize: 20, fontWeight: 700 }}>
+                {Math.round((selectedResult.score / selectedResult.total) * 100)}%
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: 12, color: "var(--muted)" }}>Submitted</div>
+              <div style={{ fontSize: 14 }}>{fmtDateTime(selectedResult.submittedAt)}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 12, color: "var(--muted)" }}>Status</div>
+              <div style={{ fontSize: 16, fontWeight: 600, color: (selectedResult.score / selectedResult.total) >= 0.6 ? "var(--success)" : "var(--danger)" }}>
+                {(selectedResult.score / selectedResult.total) >= 0.6 ? "✅ Passed" : "❌ Failed"}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Questions with Correct Answers */}
+        <div style={{ maxHeight: "500px", overflowY: "auto" }}>
+          {Array.from({ length: totalQuestions }).map((_, index) => {
+            const userAnswer = selectedResult.questionResults && selectedResult.questionResults[index] 
+              ? selectedResult.questionResults[index].userAnswer 
+              : undefined;
+            const correctAnswer = selectedResult.questionResults && selectedResult.questionResults[index]
+              ? selectedResult.questionResults[index].correctAnswer
+              : (exam ? exam.correctAnswers[index] : undefined);
+            const isCorrect = selectedResult.questionResults && selectedResult.questionResults[index]
+              ? selectedResult.questionResults[index].isCorrect
+              : (userAnswer !== undefined && userAnswer === correctAnswer);
+            const question = questions[index] || { text: `Question ${index + 1}`, options: ['A', 'B', 'C', 'D'] };
+            
+            return (
+              <div key={index} className="card-plain" style={{ marginBottom: 12 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                  <div style={{ fontWeight: 600, fontSize: 15 }}>
+                    Question {index + 1}
+                    {userAnswer !== undefined ? (
+                      isCorrect ? (
+                        <span style={{ marginLeft: 10, fontSize: 14, color: "var(--success)" }}>✅</span>
+                      ) : (
+                        <span style={{ marginLeft: 10, fontSize: 14, color: "var(--danger)" }}>❌</span>
+                      )
+                    ) : (
+                      <span style={{ marginLeft: 10, fontSize: 12, color: "var(--muted)" }}>(Not Answered)</span>
+                    )}
+                  </div>
+                  <div>
+                    {userAnswer !== undefined && (
+                      <span style={{ fontSize: 13 }}>
+                        Your Answer: <strong style={{ color: isCorrect ? "var(--success)" : "var(--danger)" }}>
+                          {LETTERS[userAnswer] || userAnswer}
+                        </strong>
+                      </span>
+                    )}
+                    {correctAnswer !== undefined && (
+                      <span style={{ fontSize: 13, marginLeft: 16 }}>
+                        Correct Answer: <strong style={{ color: "var(--success)" }}>
+                          {LETTERS[correctAnswer] || correctAnswer}
+                        </strong>
+                      </span>
+                    )}
+                  </div>
+                </div>
+                
+                <div style={{ fontSize: 14, color: "var(--ink-soft)", marginBottom: 8 }}>
+                  {question.text}
+                </div>
+                
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+                  {question.options && question.options.map((option, oi) => {
+                    const letter = LETTERS[oi] || String.fromCharCode(65 + oi);
+                    const isUserAnswer = userAnswer === oi;
+                    const isCorrectAnswer = correctAnswer === oi;
+                    let bgColor = "transparent";
+                    let borderColor = "var(--line)";
+                    let textColor = "var(--ink)";
+                    
+                    if (isUserAnswer && isCorrectAnswer) {
+                      bgColor = "rgba(63,122,93,0.15)";
+                      borderColor = "var(--success)";
+                      textColor = "var(--success)";
+                    } else if (isUserAnswer && !isCorrectAnswer) {
+                      bgColor = "rgba(178,58,72,0.12)";
+                      borderColor = "var(--danger)";
+                      textColor = "var(--danger)";
+                    } else if (isCorrectAnswer) {
+                      bgColor = "rgba(63,122,93,0.08)";
+                      borderColor = "var(--success)";
+                    }
+                    
+                    return (
+                      <div key={oi} style={{
+                        padding: "6px 12px",
+                        borderRadius: "4px",
+                        background: bgColor,
+                        border: `1px solid ${borderColor}`,
+                        color: textColor,
+                        fontSize: 13,
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6
+                      }}>
+                        <span style={{ fontWeight: 600 }}>{letter}.</span>
+                        <span>{option}</span>
+                        {isUserAnswer && <span style={{ fontSize: 10, marginLeft: "auto" }}>(Your Answer)</span>}
+                        {isCorrectAnswer && !isUserAnswer && <span style={{ fontSize: 10, marginLeft: "auto", color: "var(--success)" }}>✓ Correct</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <button className="btn btn-primary" style={{ marginTop: 16 }} onClick={closeDetailedView}>
+          <ChevronLeft size={15} /> Back to Results
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div>
       <div className="page-title font-display">Results</div>
       <div className="page-sub">{isStudent ? "Your marks across mock tests." : "Marks scored by students across all mock tests."}</div>
 
       <div className="card-plain">
-        <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
+        <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
           <select value={examId} onChange={(e) => setExamId(e.target.value)} style={{ maxWidth: 260 }}>
             <option value="all">All exams</option>
             {exams.map((e) => <option key={e.id} value={e.id}>{e.title}</option>)}
           </select>
-          {!isStudent && <input placeholder="Search student…" value={search} onChange={(e) => setSearch(e.target.value)} style={{ maxWidth: 220 }} />}
+          {!isStudent && (
+            <input 
+              placeholder="Search student…" 
+              value={search} 
+              onChange={(e) => setSearch(e.target.value)} 
+              style={{ maxWidth: 220 }} 
+            />
+          )}
         </div>
 
         {filtered.length === 0 ? (
           <div className="empty"><Award size={30} /><div>No results yet — scores will appear here once exams are completed.</div></div>
         ) : (
           <table>
-            <thead><tr>{!isStudent && <th>Student</th>}<th>Exam</th><th>Score</th><th>%</th><th>Submitted</th></tr></thead>
+            <thead>
+              <tr>
+                {!isStudent && <th>Student</th>}
+                <th>Exam</th>
+                <th>Score</th>
+                <th>%</th>
+                <th>Submitted</th>
+                {isStudent && <th>Actions</th>}
+              </tr>
+            </thead>
             <tbody>
               {filtered.map((r) => {
                 const pct = Math.round((r.score / r.total) * 100);
                 return (
                   <tr key={r.id}>
                     {!isStudent && <td style={{ fontWeight: 600 }}>{r.studentName}</td>}
-                    <td>{r.examTitle}</td><td>{r.score}/{r.total}</td>
-                    <td><span className={`pill ${pct >= 60 ? "pill-green" : pct >= 40 ? "pill-gold" : "pill-red"}`}>{pct}%</span></td>
+                    <td>{r.examTitle}</td>
+                    <td>{r.score}/{r.total}</td>
+                    <td>
+                      <span className={`pill ${pct >= 60 ? "pill-green" : pct >= 40 ? "pill-gold" : "pill-red"}`}>
+                        {pct}%
+                      </span>
+                    </td>
                     <td style={{ color: "var(--muted)" }}>{fmtDateTime(r.submittedAt)}</td>
+                    {isStudent && (
+                      <td>
+                        <button 
+                          className="btn btn-primary btn-sm" 
+                          onClick={() => handleViewDetails(r)}
+                        >
+                          <BookOpen size={13} /> Review Answers
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 );
               })}
