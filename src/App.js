@@ -261,74 +261,74 @@ export default function App() {
 
   // Load data from Supabase and localStorage
   useEffect(() => {
-    (async () => {
-      try {
-        // Load students from Supabase
-        const { data: studentsData, error: studentsError } = await supabase
-          .from('students')
-          .select('*');
-        
-        if (studentsError) {
-          console.error('Supabase load error:', studentsError);
-          // Fallback to localStorage
-          const s = await loadKey(STORAGE_KEYS.students, []);
-          setStudents(s);
-        } else {
-          setStudents(studentsData || []);
-          // Save to localStorage as backup
-          if (studentsData && studentsData.length > 0) {
-            await saveKey(STORAGE_KEYS.students, studentsData);
-          }
-        }
-        
-        // Load other data from localStorage
-        const [n, e, a, r, no, ac, fa, se] = await Promise.all([
-          loadKey(STORAGE_KEYS.notes, []),
-          loadKey(STORAGE_KEYS.exams, []),
-          loadKey(STORAGE_KEYS.attendance, {}),
-          loadKey(STORAGE_KEYS.results, []),
-          loadKey(STORAGE_KEYS.notifications, []),
-          loadKey(STORAGE_KEYS.adminCreds, DEFAULT_ADMIN),
-          loadKey(STORAGE_KEYS.facultyAccounts, []),
-          loadKey(STORAGE_KEYS.settings, DEFAULT_SETTINGS),
-        ]);
-        
-        setNotes(n); 
-        setExams(e); 
-        setAttendance(a); 
-        setResults(r);
-        setNotifications(no); 
-        setAdminCreds(ac); 
-        setFacultyAccounts(fa); 
-        setSettings(se);
-        setLoading(false);
-      } catch (error) {
-        console.error('Error loading data:', error);
-        // Fallback to localStorage for everything
-        const [s, n, e, a, r, no, ac, fa, se] = await Promise.all([
-          loadKey(STORAGE_KEYS.students, []),
-          loadKey(STORAGE_KEYS.notes, []),
-          loadKey(STORAGE_KEYS.exams, []),
-          loadKey(STORAGE_KEYS.attendance, {}),
-          loadKey(STORAGE_KEYS.results, []),
-          loadKey(STORAGE_KEYS.notifications, []),
-          loadKey(STORAGE_KEYS.adminCreds, DEFAULT_ADMIN),
-          loadKey(STORAGE_KEYS.facultyAccounts, []),
-          loadKey(STORAGE_KEYS.settings, DEFAULT_SETTINGS),
-        ]);
-        setStudents(s); 
-        setNotes(n); 
-        setExams(e); 
-        setAttendance(a); 
-        setResults(r);
-        setNotifications(no); 
-        setAdminCreds(ac); 
-        setFacultyAccounts(fa); 
-        setSettings(se);
-        setLoading(false);
+  (async () => {
+    try {
+      // Load students from Supabase
+      const { data: studentsData, error: studentsError } = await supabase
+        .from('students')
+        .select('*');
+      
+      if (studentsError) {
+        console.error('Supabase students load error:', studentsError);
       }
-    })();
-  }, []);
+      
+      // Load faculty from Supabase
+      const { data: facultyData, error: facultyError } = await supabase
+        .from('faculty_accounts')
+        .select('*');
+      
+      if (facultyError) {
+        console.error('Supabase faculty load error:', facultyError);
+      }
+      
+      // Load other data from localStorage
+      const [n, e, a, r, no, ac, se] = await Promise.all([
+        loadKey(STORAGE_KEYS.notes, []),
+        loadKey(STORAGE_KEYS.exams, []),
+        loadKey(STORAGE_KEYS.attendance, {}),
+        loadKey(STORAGE_KEYS.results, []),
+        loadKey(STORAGE_KEYS.notifications, []),
+        loadKey(STORAGE_KEYS.adminCreds, DEFAULT_ADMIN),
+        loadKey(STORAGE_KEYS.settings, DEFAULT_SETTINGS),
+      ]);
+      
+      setStudents(studentsData || []); 
+      setFacultyAccounts(facultyData || []);
+      setNotes(n); 
+      setExams(e); 
+      setAttendance(a); 
+      setResults(r);
+      setNotifications(no); 
+      setAdminCreds(ac); 
+      setSettings(se);
+      setLoading(false);
+    } catch (error) {
+      console.error('Error loading data:', error);
+      // Fallback to localStorage
+      const [s, n, e, a, r, no, ac, fa, se] = await Promise.all([
+        loadKey(STORAGE_KEYS.students, []),
+        loadKey(STORAGE_KEYS.notes, []),
+        loadKey(STORAGE_KEYS.exams, []),
+        loadKey(STORAGE_KEYS.attendance, {}),
+        loadKey(STORAGE_KEYS.results, []),
+        loadKey(STORAGE_KEYS.notifications, []),
+        loadKey(STORAGE_KEYS.adminCreds, DEFAULT_ADMIN),
+        loadKey(STORAGE_KEYS.facultyAccounts, []),
+        loadKey(STORAGE_KEYS.settings, DEFAULT_SETTINGS),
+      ]);
+      setStudents(s); 
+      setNotes(n); 
+      setExams(e); 
+      setAttendance(a); 
+      setResults(r);
+      setNotifications(no); 
+      setAdminCreds(ac); 
+      setFacultyAccounts(fa); 
+      setSettings(se);
+      setLoading(false);
+    }
+  })();
+}, []);
 
   useEffect(() => {
     const restorePDFs = async () => {
@@ -515,39 +515,86 @@ function LoginScreen({ settings, adminCreds, facultyAccounts, students, onLogin,
     setLoginError("");
 
     if (role === "faculty") {
-      const acc = facultyAccounts.find(
-        (f) => f.username.toLowerCase() === trimmedId.toLowerCase() && f.password === trimmedPassword
-      );
-      if (acc) {
-        onLogin({ role: "faculty", id: acc.id, name: acc.name });
-        showToast(`Welcome ${acc.name}!`, "success");
-        setIsLoading(false);
-        return;
-      } else {
-        setLoginError("Incorrect faculty username or password.");
-        showToast("❌ Incorrect faculty username or password.", "error");
+      // FACULTY LOGIN - Check Supabase
+      try {
+        console.log("Faculty login attempt:", trimmedId, trimmedPassword);
+        
+        const { data: facultyData, error } = await supabase
+          .from('faculty_accounts')
+          .select('*')
+          .eq('username', trimmedId.toLowerCase());
+        
+        console.log("Faculty query result:", facultyData, error);
+        
+        if (error) {
+          console.error("Supabase faculty error:", error);
+        }
+        
+        // Check if we got data
+        if (facultyData && facultyData.length > 0) {
+          const faculty = facultyData[0];
+          if (faculty.password === trimmedPassword) {
+            onLogin({ 
+              role: "faculty", 
+              id: faculty.id, 
+              name: faculty.name,
+              username: faculty.username 
+            });
+            showToast(`Welcome ${faculty.name}!`, "success");
+            setIsLoading(false);
+            return;
+          } else {
+            setLoginError("Incorrect password. Please try again.");
+            showToast("❌ Incorrect password. Please try again.", "error");
+            setPassword('');
+            setIsLoading(false);
+            return;
+          }
+        } else {
+          // Check in localStorage as fallback
+          const acc = facultyAccounts.find(
+            (f) => f.username.toLowerCase() === trimmedId.toLowerCase() && f.password === trimmedPassword
+          );
+          if (acc) {
+            onLogin({ role: "faculty", id: acc.id, name: acc.name });
+            showToast(`Welcome ${acc.name}!`, "success");
+            setIsLoading(false);
+            return;
+          } else {
+            setLoginError(`No faculty found with username "${trimmedId}".`);
+            showToast(`❌ No faculty found with username "${trimmedId}".`, "error");
+            setPassword('');
+            setIsLoading(false);
+            return;
+          }
+        }
+      } catch (error) {
+        console.error("Supabase faculty error:", error);
+        setLoginError("Database error. Please try again.");
+        showToast("❌ Database error. Please try again.", "error");
         setPassword('');
         setIsLoading(false);
         return;
       }
     }
 
+    // STUDENT LOGIN - Check Supabase
     try {
       const { data: studentData, error } = await supabase
         .from('students')
         .select('*')
-        .eq('username', trimmedId.toLowerCase())
-        .single();
-
-      if (studentData) {
-        if (studentData.password === trimmedPassword) {
+        .eq('username', trimmedId.toLowerCase());
+      
+      if (studentData && studentData.length > 0) {
+        const student = studentData[0];
+        if (student.password === trimmedPassword) {
           onLogin({ 
             role: "student", 
-            id: studentData.id, 
-            name: studentData.name, 
-            username: studentData.username 
+            id: student.id, 
+            name: student.name, 
+            username: student.username 
           });
-          showToast(`Welcome ${studentData.name}!`, "success");
+          showToast(`Welcome ${student.name}!`, "success");
           setIsLoading(false);
           return;
         } else {
@@ -558,14 +605,30 @@ function LoginScreen({ settings, adminCreds, facultyAccounts, students, onLogin,
           return;
         }
       } else {
-        setLoginError(`No student found with username "${trimmedId}".`);
-        showToast(`❌ No student found with username "${trimmedId}".`, "error");
-        setPassword('');
-        setIsLoading(false);
-        return;
+        // Fallback to localStorage students
+        const student = students.find(
+          (st) => st.username.toLowerCase() === trimmedId.toLowerCase()
+        );
+        if (student && student.password === trimmedPassword) {
+          onLogin({ 
+            role: "student", 
+            id: student.id, 
+            name: student.name, 
+            username: student.username 
+          });
+          showToast(`Welcome ${student.name}!`, "success");
+          setIsLoading(false);
+          return;
+        } else {
+          setLoginError(`No student found with username "${trimmedId}".`);
+          showToast(`❌ No student found with username "${trimmedId}".`, "error");
+          setPassword('');
+          setIsLoading(false);
+          return;
+        }
       }
     } catch (error) {
-      console.error("Supabase error:", error);
+      console.error("Supabase student error:", error);
       setLoginError("Database error. Please try again.");
       showToast("❌ Database error. Please try again.", "error");
       setPassword('');
@@ -660,6 +723,9 @@ function LoginScreen({ settings, adminCreds, facultyAccounts, students, onLogin,
           </div>
           <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 6, opacity: 0.7 }}>
             {students.length} students registered
+          </div>
+          <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 4, opacity: 0.5 }}>
+            Faculty: {facultyAccounts.length} registered
           </div>
         </div>
 
