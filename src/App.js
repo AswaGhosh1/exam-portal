@@ -512,56 +512,53 @@ function LoginScreen({ settings, adminCreds, facultyAccounts, students, onLogin,
 
     if (role === "faculty") {
       try {
+        // First check localStorage
+        let faculty = facultyAccounts.find(
+          (f) => f.username.toLowerCase() === trimmedId.toLowerCase() && f.password === trimmedPassword
+        );
+        
+        if (faculty) {
+          onLogin({ role: "faculty", id: faculty.id, name: faculty.name });
+          showToast(`Welcome ${faculty.name}!`, "success");
+          setIsLoading(false);
+          return;
+        }
+        
+        // If not found, try Supabase
         const { data, error } = await supabase
           .from('faculty_accounts')
           .select('*')
           .eq('username', trimmedId.toLowerCase());
-
+        
         if (error) {
-          console.error('Faculty login error:', error);
-          setLoginError("Database error. Please try again.");
-          showToast("❌ Database error. Please try again.", "error");
-          setPassword('');
-          setIsLoading(false);
-          return;
+          console.error('Supabase error:', error);
         }
-
+        
         if (data && data.length > 0) {
-          const faculty = data[0];
-          if (faculty.password === trimmedPassword) {
-            onLogin({ role: "faculty", id: faculty.id, name: faculty.name });
-            showToast(`Welcome ${faculty.name}!`, "success");
+          const f = data[0];
+          if (f.password === trimmedPassword) {
+            onLogin({ role: "faculty", id: f.id, name: f.name });
+            showToast(`Welcome ${f.name}!`, "success");
             setIsLoading(false);
             return;
           } else {
-            setLoginError("Incorrect password. Please try again.");
-            showToast("❌ Incorrect password. Please try again.", "error");
+            setLoginError("Incorrect password.");
+            showToast("❌ Incorrect password.", "error");
             setPassword('');
             setIsLoading(false);
             return;
           }
         } else {
-          // Check localStorage as fallback
-          const acc = facultyAccounts.find(
-            (f) => f.username.toLowerCase() === trimmedId.toLowerCase() && f.password === trimmedPassword
-          );
-          if (acc) {
-            onLogin({ role: "faculty", id: acc.id, name: acc.name });
-            showToast(`Welcome ${acc.name}!`, "success");
-            setIsLoading(false);
-            return;
-          } else {
-            setLoginError(`No faculty found with username "${trimmedId}".`);
-            showToast(`❌ No faculty found.`, "error");
-            setPassword('');
-            setIsLoading(false);
-            return;
-          }
+          setLoginError(`No faculty found with username "${trimmedId}". Check Supabase.`);
+          showToast(`❌ No faculty found.`, "error");
+          setPassword('');
+          setIsLoading(false);
+          return;
         }
       } catch (error) {
         console.error('Faculty login error:', error);
         setLoginError("Error connecting to database.");
-        showToast("❌ Error connecting to database.", "error");
+        showToast("❌ Database error.", "error");
         setPassword('');
         setIsLoading(false);
         return;
@@ -570,56 +567,53 @@ function LoginScreen({ settings, adminCreds, facultyAccounts, students, onLogin,
 
     // STUDENT LOGIN
     try {
+      // First check localStorage
+      let student = students.find(
+        (st) => st.username.toLowerCase() === trimmedId.toLowerCase() && st.password === trimmedPassword
+      );
+      
+      if (student) {
+        onLogin({ role: "student", id: student.id, name: student.name, username: student.username });
+        showToast(`Welcome ${student.name}!`, "success");
+        setIsLoading(false);
+        return;
+      }
+      
+      // If not found, try Supabase
       const { data, error } = await supabase
         .from('students')
         .select('*')
         .eq('username', trimmedId.toLowerCase());
-
+      
       if (error) {
-        console.error('Student login error:', error);
-        setLoginError("Database error. Please try again.");
-        showToast("❌ Database error. Please try again.", "error");
-        setPassword('');
-        setIsLoading(false);
-        return;
+        console.error('Supabase error:', error);
       }
-
+      
       if (data && data.length > 0) {
-        const student = data[0];
-        if (student.password === trimmedPassword) {
-          onLogin({ role: "student", id: student.id, name: student.name, username: student.username });
-          showToast(`Welcome ${student.name}!`, "success");
+        const s = data[0];
+        if (s.password === trimmedPassword) {
+          onLogin({ role: "student", id: s.id, name: s.name, username: s.username });
+          showToast(`Welcome ${s.name}!`, "success");
           setIsLoading(false);
           return;
         } else {
-          setLoginError("Incorrect password. Please try again.");
-          showToast("❌ Incorrect password. Please try again.", "error");
+          setLoginError("Incorrect password.");
+          showToast("❌ Incorrect password.", "error");
           setPassword('');
           setIsLoading(false);
           return;
         }
       } else {
-        // Check localStorage as fallback
-        const student = students.find(
-          (st) => st.username.toLowerCase() === trimmedId.toLowerCase()
-        );
-        if (student && student.password === trimmedPassword) {
-          onLogin({ role: "student", id: student.id, name: student.name, username: student.username });
-          showToast(`Welcome ${student.name}!`, "success");
-          setIsLoading(false);
-          return;
-        } else {
-          setLoginError(`No student found with username "${trimmedId}".`);
-          showToast(`❌ No student found.`, "error");
-          setPassword('');
-          setIsLoading(false);
-          return;
-        }
+        setLoginError(`No student found with username "${trimmedId}".`);
+        showToast(`❌ No student found.`, "error");
+        setPassword('');
+        setIsLoading(false);
+        return;
       }
     } catch (error) {
       console.error('Student login error:', error);
       setLoginError("Error connecting to database.");
-      showToast("❌ Error connecting to database.", "error");
+      showToast("❌ Database error.", "error");
       setPassword('');
       setIsLoading(false);
       return;
