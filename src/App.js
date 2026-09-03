@@ -417,7 +417,9 @@ function LoginScreen({ settings, adminCreds, facultyAccounts, students, onLogin,
   const [role, setRole] = useState("student");
   const [idField, setIdField] = useState("");
   const [password, setPassword] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
 
+  // Keyboard shortcut for desktop
   useEffect(() => {
     const handleKeyPress = (e) => {
       if (e.ctrlKey && e.shiftKey && e.key === 'A' && !adminMode) {
@@ -445,55 +447,66 @@ function LoginScreen({ settings, adminCreds, facultyAccounts, students, onLogin,
     }
   }
 
- function submitRegular() {
-  if (!idField.trim() || !password.trim()) {
-    showToast("Enter your login details.", "error");
-    return;
-  }
-
-  if (role === "faculty") {
-    const acc = facultyAccounts.find(
-      (f) => f.username.toLowerCase() === idField.trim().toLowerCase() && f.password === password
-    );
-    if (acc) {
-      onLogin({ role: "faculty", id: acc.id, name: acc.name });
-      showToast(`Welcome ${acc.name}!`, "success");
-    } else {
-      showToast("Incorrect faculty username or password.", "error");
-      setPassword('');
-    }
-  } else {
-    // Student login - using username instead of email
-    const student = students.find(
-      (st) => st.username.toLowerCase() === idField.trim().toLowerCase()
-    );
+  function submitRegular() {
+    // Trim inputs for better matching
+    const trimmedId = idField.trim();
+    const trimmedPassword = password.trim();
     
-    if (student) {
-      if (student.password === password) {
-        onLogin({ 
-          role: "student", 
-          id: student.id, 
-          name: student.name, 
-          username: student.username 
-        });
-        showToast(`Welcome ${student.name}!`, "success");
+    if (!trimmedId || !trimmedPassword) {
+      showToast("Please enter your username and password.", "error");
+      return;
+    }
+
+    setIsLoading(true);
+
+    if (role === "faculty") {
+      // Faculty login - case insensitive username
+      const acc = facultyAccounts.find(
+        (f) => f.username.toLowerCase() === trimmedId.toLowerCase() && f.password === trimmedPassword
+      );
+      if (acc) {
+        onLogin({ role: "faculty", id: acc.id, name: acc.name });
+        showToast(`Welcome ${acc.name}!`, "success");
       } else {
-        showToast("Incorrect password. Please try again.", "error");
+        showToast("❌ Incorrect faculty username or password.", "error");
         setPassword('');
       }
     } else {
-      showToast("No student found with this username. Please check with your faculty.", "error");
-      setPassword('');
+      // Student login - case insensitive username
+      const student = students.find(
+        (st) => st.username && st.username.toLowerCase() === trimmedId.toLowerCase()
+      );
+      
+      if (student) {
+        if (student.password === trimmedPassword) {
+          onLogin({ 
+            role: "student", 
+            id: student.id, 
+            name: student.name, 
+            username: student.username 
+          });
+          showToast(`Welcome ${student.name}!`, "success");
+        } else {
+          showToast("❌ Incorrect password. Please try again.", "error");
+          setPassword('');
+        }
+      } else {
+        showToast("❌ No student found with this username. Please check with your faculty.", "error");
+        setPassword('');
+      }
     }
+    setIsLoading(false);
   }
-}
 
   function submitAdmin() {
-    if (idField.trim() === adminCreds.username && password === adminCreds.password) {
+    const trimmedId = idField.trim();
+    const trimmedPassword = password.trim();
+    
+    if (trimmedId === adminCreds.username && trimmedPassword === adminCreds.password) {
       onLogin({ role: "admin", id: "admin", name: "Administrator" });
       showToast("Admin login successful", "success");
     } else {
-      showToast("Incorrect admin username or password.", "error");
+      showToast("❌ Incorrect admin username or password.", "error");
       setPassword('');
     }
   }
@@ -519,7 +532,9 @@ function LoginScreen({ settings, adminCreds, facultyAccounts, students, onLogin,
             <input 
               value={idField} 
               onChange={(e) => setIdField(e.target.value)} 
-              placeholder="Enter admin username" 
+              placeholder="Enter admin username"
+              autoFocus
+              style={{ fontSize: "16px", padding: "12px" }}
             />
           </div>
           <div style={{ marginBottom: 18 }}>
@@ -529,12 +544,13 @@ function LoginScreen({ settings, adminCreds, facultyAccounts, students, onLogin,
               value={password} 
               onChange={(e) => setPassword(e.target.value)} 
               onKeyDown={(e) => e.key === "Enter" && submitAdmin()} 
-              placeholder="Enter admin password" 
+              placeholder="Enter admin password"
+              style={{ fontSize: "16px", padding: "12px" }}
             />
           </div>
           <button 
             className="btn btn-primary" 
-            style={{ width: "100%", justifyContent: "center" }} 
+            style={{ width: "100%", justifyContent: "center", padding: "14px", fontSize: "16px" }} 
             onClick={submitAdmin}
           >
             <Lock size={14} /> Log in
@@ -572,25 +588,31 @@ function LoginScreen({ settings, adminCreds, facultyAccounts, students, onLogin,
           <div 
             className={`role-pill ${role === "student" ? "active" : ""}`} 
             onClick={() => { setRole("student"); setIdField(""); setPassword(""); }}
+            style={{ padding: "12px 4px", fontSize: "14px" }}
           >
-            <GraduationCap size={14} /> Student
+            <GraduationCap size={16} /> Student
           </div>
           <div 
             className={`role-pill ${role === "faculty" ? "active" : ""}`} 
             onClick={() => { setRole("faculty"); setIdField(""); setPassword(""); }}
+            style={{ padding: "12px 4px", fontSize: "14px" }}
           >
-            <Users size={14} /> Faculty
+            <Users size={16} /> Faculty
           </div>
         </div>
 
-       <div style={{ marginBottom: 12 }}>
-  <label className="field-label">{role === "student" ? "Username" : "Username"}</label>
-  <input 
-    value={idField} 
-    onChange={(e) => setIdField(e.target.value)} 
-    placeholder={role === "student" ? "Enter your username" : "Enter username"} 
-  />
-</div>
+        <div style={{ marginBottom: 12 }}>
+          <label className="field-label">{role === "student" ? "Username" : "Username"}</label>
+          <input 
+            value={idField} 
+            onChange={(e) => setIdField(e.target.value)} 
+            placeholder={role === "student" ? "Enter your username" : "Enter username"}
+            style={{ fontSize: "16px", padding: "12px" }}
+            autoCapitalize="off"
+            autoCorrect="off"
+            spellCheck="false"
+          />
+        </div>
         <div style={{ marginBottom: 18 }}>
           <label className="field-label">Password</label>
           <input 
@@ -598,18 +620,56 @@ function LoginScreen({ settings, adminCreds, facultyAccounts, students, onLogin,
             value={password} 
             onChange={(e) => setPassword(e.target.value)} 
             onKeyDown={(e) => e.key === "Enter" && submitRegular()} 
-            placeholder="••••••••" 
+            placeholder="Enter your password"
+            style={{ fontSize: "16px", padding: "12px" }}
           />
         </div>
         <button 
           className="btn btn-primary" 
-          style={{ width: "100%", justifyContent: "center" }} 
+          style={{ width: "100%", justifyContent: "center", padding: "14px", fontSize: "16px" }} 
           onClick={submitRegular}
+          disabled={isLoading}
         >
-          <Lock size={14} /> Log in
+          {isLoading ? <RefreshCw size={14} className="spin" /> : <Lock size={14} />} 
+          {isLoading ? " Logging in..." : " Log in"}
         </button>
 
+        {role === "faculty" && (
+          <div className="notice" style={{ marginTop: 16 }}>
+            <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 1 }} />
+            <div>Faculty accounts are created by an admin — ask your administrator if you don't have one yet.</div>
+          </div>
+        )}
+        {role === "student" && (
+          <div className="notice" style={{ marginTop: 16 }}>
+            <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 1 }} />
+            <div>Use the username and password your faculty gave you when you were added to the roster.</div>
+          </div>
+        )}
 
+        <div style={{ textAlign: "center", marginTop: 18, fontSize: 10, color: "var(--muted)" }}>
+          🔒 Secure login
+        </div>
+
+        {/* Hidden admin tap area - tap 7 times on the bottom */}
+        <div 
+          style={{ 
+            position: "absolute", 
+            bottom: 0, 
+            left: 0, 
+            right: 0, 
+            height: "40px",
+            cursor: "pointer",
+            zIndex: 10,
+            opacity: 0.3,
+            backgroundColor: "transparent",
+            borderBottomLeftRadius: "14px",
+            borderBottomRightRadius: "14px"
+          }} 
+          onClick={openAdmin}
+          onTouchStart={openAdmin}
+          title="Tap to access admin"
+        />
       </div>
     </div>
   );
@@ -713,14 +773,15 @@ function StudentsTab({ students, setStudents, showToast }) {
       showToast("A student with this username already exists.", "error"); 
       return; 
     }
-    const rec = { 
-      id: uid(), 
-      name: name.trim(), 
-      username: username.trim().toLowerCase(), 
-      phone: phone.trim(), 
-      password: password.trim(), 
-      addedAt: new Date().toISOString() 
-    };
+    
+const rec = { 
+  id: uid(), 
+  name: name.trim(), 
+  username: username.trim().toLowerCase(), 
+  phone: phone.trim(), 
+  password: password.trim(), 
+  addedAt: new Date().toISOString() 
+};
     setStudents([...students, rec]);
     setName(""); 
     setUsername(""); 
