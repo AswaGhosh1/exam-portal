@@ -259,61 +259,58 @@ export default function App() {
     toastTimer.current = setTimeout(() => setToast(null), 3200);
   }
 
- // Replace the useEffect that loads data with:
-useEffect(() => {
-  (async () => {
-    try {
-      // Load all data from Supabase
-      const [students, notes, exams, attendance, results, notifications, adminCreds, facultyAccounts, settings] = await Promise.all([
-        db.getStudents(),
-        db.getNotes(),
-        db.getExams(),
-        db.getAttendance().then(data => {
-          // Convert attendance array to object format
-          const attObj = {};
-          data.forEach(item => {
-            if (!attObj[item.date]) attObj[item.date] = {};
-            attObj[item.date][item.student_id] = item.status;
-          });
-          return attObj;
-        }),
-        db.getResults(),
-        [], // notifications - you can add notifications table later
-        db.getAdminCreds().then(data => ({ username: data.username, password: data.password })),
-        db.getFaculty(),
-        db.getSettings().then(data => ({ title: data.title, subtitle: data.subtitle || '' }))
+  // FIRST useEffect - loads data
+  useEffect(() => {
+    (async () => {
+      const [s, n, e, a, r, no, ac, fa, se] = await Promise.all([
+        loadKey(STORAGE_KEYS.students, []),
+        loadKey(STORAGE_KEYS.notes, []),
+        loadKey(STORAGE_KEYS.exams, []),
+        loadKey(STORAGE_KEYS.attendance, {}),
+        loadKey(STORAGE_KEYS.results, []),
+        loadKey(STORAGE_KEYS.notifications, []),
+        loadKey(STORAGE_KEYS.adminCreds, DEFAULT_ADMIN),
+        loadKey(STORAGE_KEYS.facultyAccounts, []),
+        loadKey(STORAGE_KEYS.settings, DEFAULT_SETTINGS),
       ]);
       
-      setStudents(students || []);
-      setNotes(notes || []);
-      setExams(exams || []);
-      setAttendance(attendance || {});
-      setResults(results || []);
-      setNotifications(notifications || []);
-      setAdminCreds(adminCreds || DEFAULT_ADMIN);
-      setFacultyAccounts(facultyAccounts || []);
-      setSettings(settings || DEFAULT_SETTINGS);
+      let studentsData = s;
+      if (studentsData.length === 0) {
+        studentsData = [
+          { 
+            id: uid(), 
+            name: "Demo Student 1", 
+            username: "demo1", 
+            phone: "+91 98765 43210", 
+            password: "demo123", 
+            addedAt: new Date().toISOString() 
+          },
+          { 
+            id: uid(), 
+            name: "Demo Student 2", 
+            username: "demo2", 
+            phone: "+91 98765 43211", 
+            password: "demo123", 
+            addedAt: new Date().toISOString() 
+          }
+        ];
+        await saveKey(STORAGE_KEYS.students, studentsData);
+      }
+      
+      setStudents(studentsData); 
+      setNotes(n); 
+      setExams(e); 
+      setAttendance(a); 
+      setResults(r);
+      setNotifications(no); 
+      setAdminCreds(ac); 
+      setFacultyAccounts(fa); 
+      setSettings(se);
       setLoading(false);
-    } catch (error) {
-      console.error('Error loading data:', error);
-      // Fallback to localStorage if Supabase fails
-      // Keep your existing localStorage code as fallback
-      setLoading(false);
-    }
-  })();
-}, []);
+    })();
+  }, []);
 
-// Update persist functions:
-const persistStudents = async (v) => { 
-  setStudents(v); 
-  // Sync with Supabase
-  try {
-    for (const student of v) {
-      await db.addStudent(student);
-    }
-  } catch (e) { console.error('Failed to sync students:', e); }
-};
-
+  // SECOND useEffect - restores PDFs
   useEffect(() => {
     const restorePDFs = async () => {
       const storedExams = await loadKey(STORAGE_KEYS.exams, []);
@@ -334,6 +331,7 @@ const persistStudents = async (v) => {
     restorePDFs();
   }, []);
 
+  // PERSIST FUNCTIONS - Declare these ONLY ONCE
   const persistStudents = (v) => { setStudents(v); saveKey(STORAGE_KEYS.students, v); };
   const persistNotes = (v) => { setNotes(v); saveKey(STORAGE_KEYS.notes, v); };
   const persistExams = (v) => { setExams(v); saveKey(STORAGE_KEYS.exams, v); };
@@ -349,6 +347,7 @@ const persistStudents = async (v) => {
     setPdfVersion((v) => v + 1);
   }
 
+  // NAV - Only declare once
   const NAV = [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, roles: ["admin", "faculty", "student"] },
     { id: "students", label: "Students", icon: Users, roles: ["faculty"] },
@@ -359,6 +358,9 @@ const persistStudents = async (v) => {
     { id: "results", label: "Results", icon: Award, roles: ["admin", "faculty", "student"] },
     { id: "admin", label: "Admin panel", icon: Shield, roles: ["admin"] },
   ];
+
+  // ... rest of your component
+}
 
   if (loading) {
     return (
