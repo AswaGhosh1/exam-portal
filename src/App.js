@@ -259,76 +259,70 @@ export default function App() {
     toastTimer.current = setTimeout(() => setToast(null), 3200);
   }
 
-  // Load data from Supabase and localStorage
+  // Load data from Supabase
   useEffect(() => {
-  (async () => {
-    try {
-      // Load students from Supabase
-      const { data: studentsData, error: studentsError } = await supabase
-        .from('students')
-        .select('*');
-      
-      if (studentsError) {
-        console.error('Supabase students load error:', studentsError);
+    (async () => {
+      try {
+        // Load students
+        const { data: studentsData, error: studentsError } = await supabase
+          .from('students')
+          .select('*');
+        if (studentsError) console.error('Students error:', studentsError);
+
+        // Load faculty
+        const { data: facultyData, error: facultyError } = await supabase
+          .from('faculty_accounts')
+          .select('*');
+        if (facultyError) console.error('Faculty error:', facultyError);
+
+        // Load other data from localStorage
+        const [n, e, a, r, no, ac, se] = await Promise.all([
+          loadKey(STORAGE_KEYS.notes, []),
+          loadKey(STORAGE_KEYS.exams, []),
+          loadKey(STORAGE_KEYS.attendance, {}),
+          loadKey(STORAGE_KEYS.results, []),
+          loadKey(STORAGE_KEYS.notifications, []),
+          loadKey(STORAGE_KEYS.adminCreds, DEFAULT_ADMIN),
+          loadKey(STORAGE_KEYS.settings, DEFAULT_SETTINGS),
+        ]);
+
+        setStudents(studentsData || []);
+        setFacultyAccounts(facultyData || []);
+        setNotes(n);
+        setExams(e);
+        setAttendance(a);
+        setResults(r);
+        setNotifications(no);
+        setAdminCreds(ac);
+        setSettings(se);
+        setLoading(false);
+      } catch (error) {
+        console.error('Error loading data:', error);
+        // Fallback to localStorage
+        const [s, n, e, a, r, no, ac, fa, se] = await Promise.all([
+          loadKey(STORAGE_KEYS.students, []),
+          loadKey(STORAGE_KEYS.notes, []),
+          loadKey(STORAGE_KEYS.exams, []),
+          loadKey(STORAGE_KEYS.attendance, {}),
+          loadKey(STORAGE_KEYS.results, []),
+          loadKey(STORAGE_KEYS.notifications, []),
+          loadKey(STORAGE_KEYS.adminCreds, DEFAULT_ADMIN),
+          loadKey(STORAGE_KEYS.facultyAccounts, []),
+          loadKey(STORAGE_KEYS.settings, DEFAULT_SETTINGS),
+        ]);
+        setStudents(s);
+        setNotes(n);
+        setExams(e);
+        setAttendance(a);
+        setResults(r);
+        setNotifications(no);
+        setAdminCreds(ac);
+        setFacultyAccounts(fa);
+        setSettings(se);
+        setLoading(false);
       }
-      
-      // Load faculty from Supabase
-      const { data: facultyData, error: facultyError } = await supabase
-        .from('faculty_accounts')
-        .select('*');
-      
-      if (facultyError) {
-        console.error('Supabase faculty load error:', facultyError);
-      }
-      
-      // Load other data from localStorage
-      const [n, e, a, r, no, ac, se] = await Promise.all([
-        loadKey(STORAGE_KEYS.notes, []),
-        loadKey(STORAGE_KEYS.exams, []),
-        loadKey(STORAGE_KEYS.attendance, {}),
-        loadKey(STORAGE_KEYS.results, []),
-        loadKey(STORAGE_KEYS.notifications, []),
-        loadKey(STORAGE_KEYS.adminCreds, DEFAULT_ADMIN),
-        loadKey(STORAGE_KEYS.settings, DEFAULT_SETTINGS),
-      ]);
-      
-      setStudents(studentsData || []); 
-      setFacultyAccounts(facultyData || []);
-      setNotes(n); 
-      setExams(e); 
-      setAttendance(a); 
-      setResults(r);
-      setNotifications(no); 
-      setAdminCreds(ac); 
-      setSettings(se);
-      setLoading(false);
-    } catch (error) {
-      console.error('Error loading data:', error);
-      // Fallback to localStorage
-      const [s, n, e, a, r, no, ac, fa, se] = await Promise.all([
-        loadKey(STORAGE_KEYS.students, []),
-        loadKey(STORAGE_KEYS.notes, []),
-        loadKey(STORAGE_KEYS.exams, []),
-        loadKey(STORAGE_KEYS.attendance, {}),
-        loadKey(STORAGE_KEYS.results, []),
-        loadKey(STORAGE_KEYS.notifications, []),
-        loadKey(STORAGE_KEYS.adminCreds, DEFAULT_ADMIN),
-        loadKey(STORAGE_KEYS.facultyAccounts, []),
-        loadKey(STORAGE_KEYS.settings, DEFAULT_SETTINGS),
-      ]);
-      setStudents(s); 
-      setNotes(n); 
-      setExams(e); 
-      setAttendance(a); 
-      setResults(r);
-      setNotifications(no); 
-      setAdminCreds(ac); 
-      setFacultyAccounts(fa); 
-      setSettings(se);
-      setLoading(false);
-    }
-  })();
-}, []);
+    })();
+  }, []);
 
   useEffect(() => {
     const restorePDFs = async () => {
@@ -517,29 +511,24 @@ function LoginScreen({ settings, adminCreds, facultyAccounts, students, onLogin,
     if (role === "faculty") {
       // FACULTY LOGIN - Check Supabase
       try {
-        console.log("Faculty login attempt:", trimmedId, trimmedPassword);
-        
-        const { data: facultyData, error } = await supabase
+        const { data, error } = await supabase
           .from('faculty_accounts')
           .select('*')
           .eq('username', trimmedId.toLowerCase());
-        
-        console.log("Faculty query result:", facultyData, error);
-        
+
         if (error) {
-          console.error("Supabase faculty error:", error);
+          console.error('Faculty login error:', error);
+          setLoginError("Database error. Please try again.");
+          showToast("❌ Database error. Please try again.", "error");
+          setPassword('');
+          setIsLoading(false);
+          return;
         }
-        
-        // Check if we got data
-        if (facultyData && facultyData.length > 0) {
-          const faculty = facultyData[0];
+
+        if (data && data.length > 0) {
+          const faculty = data[0];
           if (faculty.password === trimmedPassword) {
-            onLogin({ 
-              role: "faculty", 
-              id: faculty.id, 
-              name: faculty.name,
-              username: faculty.username 
-            });
+            onLogin({ role: "faculty", id: faculty.id, name: faculty.name });
             showToast(`Welcome ${faculty.name}!`, "success");
             setIsLoading(false);
             return;
@@ -551,7 +540,7 @@ function LoginScreen({ settings, adminCreds, facultyAccounts, students, onLogin,
             return;
           }
         } else {
-          // Check in localStorage as fallback
+          // Check localStorage as fallback
           const acc = facultyAccounts.find(
             (f) => f.username.toLowerCase() === trimmedId.toLowerCase() && f.password === trimmedPassword
           );
@@ -562,38 +551,42 @@ function LoginScreen({ settings, adminCreds, facultyAccounts, students, onLogin,
             return;
           } else {
             setLoginError(`No faculty found with username "${trimmedId}".`);
-            showToast(`❌ No faculty found with username "${trimmedId}".`, "error");
+            showToast(`❌ No faculty found.`, "error");
             setPassword('');
             setIsLoading(false);
             return;
           }
         }
       } catch (error) {
-        console.error("Supabase faculty error:", error);
-        setLoginError("Database error. Please try again.");
-        showToast("❌ Database error. Please try again.", "error");
+        console.error('Faculty login error:', error);
+        setLoginError("Error connecting to database.");
+        showToast("❌ Error connecting to database.", "error");
         setPassword('');
         setIsLoading(false);
         return;
       }
     }
 
-    // STUDENT LOGIN - Check Supabase
+    // STUDENT LOGIN
     try {
-      const { data: studentData, error } = await supabase
+      const { data, error } = await supabase
         .from('students')
         .select('*')
         .eq('username', trimmedId.toLowerCase());
-      
-      if (studentData && studentData.length > 0) {
-        const student = studentData[0];
+
+      if (error) {
+        console.error('Student login error:', error);
+        setLoginError("Database error. Please try again.");
+        showToast("❌ Database error. Please try again.", "error");
+        setPassword('');
+        setIsLoading(false);
+        return;
+      }
+
+      if (data && data.length > 0) {
+        const student = data[0];
         if (student.password === trimmedPassword) {
-          onLogin({ 
-            role: "student", 
-            id: student.id, 
-            name: student.name, 
-            username: student.username 
-          });
+          onLogin({ role: "student", id: student.id, name: student.name, username: student.username });
           showToast(`Welcome ${student.name}!`, "success");
           setIsLoading(false);
           return;
@@ -605,32 +598,27 @@ function LoginScreen({ settings, adminCreds, facultyAccounts, students, onLogin,
           return;
         }
       } else {
-        // Fallback to localStorage students
+        // Check localStorage as fallback
         const student = students.find(
           (st) => st.username.toLowerCase() === trimmedId.toLowerCase()
         );
         if (student && student.password === trimmedPassword) {
-          onLogin({ 
-            role: "student", 
-            id: student.id, 
-            name: student.name, 
-            username: student.username 
-          });
+          onLogin({ role: "student", id: student.id, name: student.name, username: student.username });
           showToast(`Welcome ${student.name}!`, "success");
           setIsLoading(false);
           return;
         } else {
           setLoginError(`No student found with username "${trimmedId}".`);
-          showToast(`❌ No student found with username "${trimmedId}".`, "error");
+          showToast(`❌ No student found.`, "error");
           setPassword('');
           setIsLoading(false);
           return;
         }
       }
     } catch (error) {
-      console.error("Supabase student error:", error);
-      setLoginError("Database error. Please try again.");
-      showToast("❌ Database error. Please try again.", "error");
+      console.error('Student login error:', error);
+      setLoginError("Error connecting to database.");
+      showToast("❌ Error connecting to database.", "error");
       setPassword('');
       setIsLoading(false);
       return;
@@ -722,10 +710,7 @@ function LoginScreen({ settings, adminCreds, facultyAccounts, students, onLogin,
             Sign in to continue
           </div>
           <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 6, opacity: 0.7 }}>
-            {students.length} students registered
-          </div>
-          <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 4, opacity: 0.5 }}>
-            Faculty: {facultyAccounts.length} registered
+            {students.length} students • {facultyAccounts.length} faculty registered
           </div>
         </div>
 
@@ -761,11 +746,11 @@ function LoginScreen({ settings, adminCreds, facultyAccounts, students, onLogin,
         )}
 
         <div style={{ marginBottom: 12 }}>
-          <label className="field-label">{role === "student" ? "Username" : "Username"}</label>
+          <label className="field-label">Username</label>
           <input 
             value={idField} 
             onChange={(e) => setIdField(e.target.value)} 
-            placeholder={role === "student" ? "Enter your username" : "Enter username"}
+            placeholder="Enter your username"
             style={{ fontSize: "16px", padding: "12px" }}
             autoCapitalize="off"
             autoCorrect="off"
@@ -796,15 +781,13 @@ function LoginScreen({ settings, adminCreds, facultyAccounts, students, onLogin,
         {role === "faculty" && (
           <div className="notice" style={{ marginTop: 16 }}>
             <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 1 }} />
-            <div>Faculty accounts are created by an admin. Contact your administrator if you don't have one.</div>
+            <div>Faculty accounts are created by an admin.</div>
           </div>
         )}
         {role === "student" && (
           <div className="notice" style={{ marginTop: 16 }}>
             <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 1 }} />
-            <div>
-              <strong>Login with your username</strong>
-            </div>
+            <div>Login with your username and password.</div>
           </div>
         )}
 
@@ -812,7 +795,6 @@ function LoginScreen({ settings, adminCreds, facultyAccounts, students, onLogin,
           {students.length} students • {facultyAccounts.length} faculty
         </div>
 
-        {/* Hidden admin tap area */}
         <div 
           style={{ 
             position: "absolute", 
@@ -976,7 +958,7 @@ function StudentsTab({ students, setStudents, showToast }) {
       showToast(`${rec.name} added — share their login (username + password) with them.`);
     } catch (error) {
       console.error('Error adding student:', error);
-      showToast('Failed to add student. Please check console for details.', 'error');
+      showToast('Failed to add student.', 'error');
     } finally {
       setIsLoading(false);
     }
@@ -1057,7 +1039,7 @@ function StudentsTab({ students, setStudents, showToast }) {
         )}
         <div className="notice" style={{ marginTop: 14 }}>
           <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 1 }} />
-          <div>Passwords are shown in plain text here to make sharing easy in this demo. A production rollout should hash passwords and never display them after creation.</div>
+          <div>Passwords are shown in plain text here to make sharing easy in this demo.</div>
         </div>
       </div>
     </div>
@@ -1110,10 +1092,6 @@ function NotesTab({ notes, setNotes, currentUser, showToast }) {
             </label>
             {fileInfo && <span style={{ fontSize: 12.5, color: "var(--muted)" }}>{fileInfo.name}</span>}
           </div>
-          <div className="notice" style={{ marginBottom: 14 }}>
-            <AlertTriangle size={15} style={{ flexShrink: 0, marginTop: 1 }} />
-            <div>The title and description are saved for everyone. The PDF itself only previews in this browser session — permanent file storage needs a small backend (e.g. an S3 bucket), which I can help set up.</div>
-          </div>
           <button className="btn btn-primary" onClick={addNote}><PlusCircle size={15} /> Save note</button>
         </div>
       )}
@@ -1127,7 +1105,7 @@ function NotesTab({ notes, setNotes, currentUser, showToast }) {
                 <div>
                   <div style={{ fontWeight: 600 }}>{n.title} {n.subject && <span className="pill pill-gray" style={{ marginLeft: 6 }}>{n.subject}</span>}</div>
                   {n.description && <div style={{ fontSize: 12.5, color: "var(--ink-soft)", marginTop: 3 }}>{n.description}</div>}
-                  <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 4 }}>{n.fileName ? `${n.fileName} · ` : ""}{fmtDate(n.uploadedAt)}</div>
+                  <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 4 }}>{fmtDate(n.uploadedAt)}</div>
                 </div>
                 {canEdit && <button className="btn btn-danger btn-sm" onClick={() => removeNote(n.id)}><Trash2 size={13} /></button>}
               </div>
@@ -1138,8 +1116,6 @@ function NotesTab({ notes, setNotes, currentUser, showToast }) {
     </div>
   );
 }
-
-
 
 
 /* ---------------------------------- Exams ---------------------------------- */
