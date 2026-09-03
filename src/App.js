@@ -259,7 +259,6 @@ export default function App() {
     toastTimer.current = setTimeout(() => setToast(null), 3200);
   }
 
-  // FIRST useEffect - loads data
   useEffect(() => {
     (async () => {
       const [s, n, e, a, r, no, ac, fa, se] = await Promise.all([
@@ -274,30 +273,7 @@ export default function App() {
         loadKey(STORAGE_KEYS.settings, DEFAULT_SETTINGS),
       ]);
       
-      let studentsData = s;
-      if (studentsData.length === 0) {
-        studentsData = [
-          { 
-            id: uid(), 
-            name: "Demo Student 1", 
-            username: "demo1", 
-            phone: "+91 98765 43210", 
-            password: "demo123", 
-            addedAt: new Date().toISOString() 
-          },
-          { 
-            id: uid(), 
-            name: "Demo Student 2", 
-            username: "demo2", 
-            phone: "+91 98765 43211", 
-            password: "demo123", 
-            addedAt: new Date().toISOString() 
-          }
-        ];
-        await saveKey(STORAGE_KEYS.students, studentsData);
-      }
-      
-      setStudents(studentsData); 
+      setStudents(s); 
       setNotes(n); 
       setExams(e); 
       setAttendance(a); 
@@ -310,7 +286,6 @@ export default function App() {
     })();
   }, []);
 
-  // SECOND useEffect - restores PDFs
   useEffect(() => {
     const restorePDFs = async () => {
       const storedExams = await loadKey(STORAGE_KEYS.exams, []);
@@ -331,7 +306,6 @@ export default function App() {
     restorePDFs();
   }, []);
 
-  // PERSIST FUNCTIONS - Declare these ONLY ONCE
   const persistStudents = (v) => { setStudents(v); saveKey(STORAGE_KEYS.students, v); };
   const persistNotes = (v) => { setNotes(v); saveKey(STORAGE_KEYS.notes, v); };
   const persistExams = (v) => { setExams(v); saveKey(STORAGE_KEYS.exams, v); };
@@ -347,7 +321,6 @@ export default function App() {
     setPdfVersion((v) => v + 1);
   }
 
-  // NAV - Only declare once
   const NAV = [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, roles: ["admin", "faculty", "student"] },
     { id: "students", label: "Students", icon: Users, roles: ["faculty"] },
@@ -358,9 +331,6 @@ export default function App() {
     { id: "results", label: "Results", icon: Award, roles: ["admin", "faculty", "student"] },
     { id: "admin", label: "Admin panel", icon: Shield, roles: ["admin"] },
   ];
-
-  // ... rest of your component
-}
 
   if (loading) {
     return (
@@ -488,7 +458,7 @@ function LoginScreen({ settings, adminCreds, facultyAccounts, students, onLogin,
     }
   }
 
-  function submitRegular() {
+  async function submitRegular() {
     const trimmedId = idField.trim();
     const trimmedPassword = password.trim();
     
@@ -519,39 +489,47 @@ function LoginScreen({ settings, adminCreds, facultyAccounts, students, onLogin,
       }
     }
 
-    // STUDENT LOGIN
-   // In LoginScreen, replace the student login with:
-const { data: studentData, error } = await supabase
-  .from('students')
-  .select('*')
-  .eq('username', trimmedId.toLowerCase())
-  .single();
+    try {
+      const { data: studentData, error } = await supabase
+        .from('students')
+        .select('*')
+        .eq('username', trimmedId.toLowerCase())
+        .single();
 
-if (studentData) {
-  if (studentData.password === trimmedPassword) {
-    onLogin({ 
-      role: "student", 
-      id: studentData.id, 
-      name: studentData.name, 
-      username: studentData.username 
-    });
-    showToast(`Welcome ${studentData.name}!`, "success");
-    setIsLoading(false);
-    return;
-  } else {
-    setLoginError("Incorrect password. Please try again.");
-    showToast("❌ Incorrect password. Please try again.", "error");
-    setPassword('');
-    setIsLoading(false);
-    return;
+      if (studentData) {
+        if (studentData.password === trimmedPassword) {
+          onLogin({ 
+            role: "student", 
+            id: studentData.id, 
+            name: studentData.name, 
+            username: studentData.username 
+          });
+          showToast(`Welcome ${studentData.name}!`, "success");
+          setIsLoading(false);
+          return;
+        } else {
+          setLoginError("Incorrect password. Please try again.");
+          showToast("❌ Incorrect password. Please try again.", "error");
+          setPassword('');
+          setIsLoading(false);
+          return;
+        }
+      } else {
+        setLoginError(`No student found with username "${trimmedId}".`);
+        showToast(`❌ No student found with username "${trimmedId}".`, "error");
+        setPassword('');
+        setIsLoading(false);
+        return;
+      }
+    } catch (error) {
+      console.error("Supabase error:", error);
+      setLoginError("Database error. Please try again.");
+      showToast("❌ Database error. Please try again.", "error");
+      setPassword('');
+      setIsLoading(false);
+      return;
+    }
   }
-} else {
-  setLoginError(`No student found with username "${trimmedId}".`);
-  showToast(`❌ No student found with username "${trimmedId}".`, "error");
-  setPassword('');
-  setIsLoading(false);
-  return;
-}
 
   function submitAdmin() {
     const trimmedId = idField.trim();
@@ -640,9 +618,6 @@ if (studentData) {
           <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 6, opacity: 0.7 }}>
             {students.length} students registered
           </div>
-          <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 4, opacity: 0.5 }}>
-            Demo: demo1/demo123 or demo2/demo123
-          </div>
         </div>
 
         <div className="role-pills">
@@ -720,17 +695,12 @@ if (studentData) {
             <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 1 }} />
             <div>
               <strong>Login with your username</strong>
-              {students.length > 0 && (
-                <span style={{ display: "block", marginTop: 4, fontSize: 11, color: "var(--muted)" }}>
-                  Demo: <strong>demo1</strong> / <strong>demo123</strong> or <strong>demo2</strong> / <strong>demo123</strong>
-                </span>
-              )}
             </div>
           </div>
         )}
 
         <div style={{ textAlign: "center", marginTop: 18, fontSize: 10, color: "var(--muted)" }}>
-          🔒 Secure login • {students.length} students • {facultyAccounts.length} faculty
+          {students.length} students • {facultyAccounts.length} faculty
         </div>
 
         {/* Hidden admin tap area */}
@@ -1580,42 +1550,42 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
   }
 
   function submitExam() {
-  if (finished) return;
-  let score = 0;
-  const questionResults = [];
-  
-  for (let i = 0; i < exam.totalQuestions; i++) {
-    const isCorrect = answers[i] === exam.correctAnswers[i];
-    if (isCorrect) score += 1;
-    questionResults.push({
-      questionIndex: i,
-      userAnswer: answers[i] !== undefined ? answers[i] : null,
-      correctAnswer: exam.correctAnswers[i],
-      isCorrect: isCorrect
-    });
+    if (finished) return;
+    let score = 0;
+    const questionResults = [];
+    
+    for (let i = 0; i < exam.totalQuestions; i++) {
+      const isCorrect = answers[i] === exam.correctAnswers[i];
+      if (isCorrect) score += 1;
+      questionResults.push({
+        questionIndex: i,
+        userAnswer: answers[i] !== undefined ? answers[i] : null,
+        correctAnswer: exam.correctAnswers[i],
+        isCorrect: isCorrect
+      });
+    }
+    
+    const rec = { 
+      id: uid(), 
+      examId: exam.id, 
+      examTitle: exam.title, 
+      studentId: currentUser.id, 
+      studentName: currentUser.name, 
+      score, 
+      total: exam.totalQuestions, 
+      submittedAt: new Date().toISOString(),
+      questionResults: questionResults
+    };
+    const updated = [...results, rec];
+    setResults(updated);
+    saveKey(STORAGE_KEYS.results, updated);
+    setFinished(rec); 
+    setStarted(false);
+    setShowConfirmFinish(false);
+    setShowReview(true);
+    setReviewIndex(0);
+    showToast(`Submitted! Score: ${score}/${exam.totalQuestions}`);
   }
-  
-  const rec = { 
-    id: uid(), 
-    examId: exam.id, 
-    examTitle: exam.title, 
-    studentId: currentUser.id, 
-    studentName: currentUser.name, 
-    score, 
-    total: exam.totalQuestions, 
-    submittedAt: new Date().toISOString(),
-    questionResults: questionResults // Store individual question results
-  };
-  const updated = [...results, rec];
-  setResults(updated);
-  saveKey(STORAGE_KEYS.results, updated);
-  setFinished(rec); 
-  setStarted(false);
-  setShowConfirmFinish(false);
-  setShowReview(true);
-  setReviewIndex(0);
-  showToast(`Submitted! Score: ${score}/${exam.totalQuestions}`);
-}
 
   function finishExam() {
     setShowConfirmFinish(true);
@@ -1655,7 +1625,6 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
         <div className="page-title font-display">Exam Review</div>
         <div className="page-sub">Review your answers and see correct/incorrect responses.</div>
 
-        {/* Score Summary */}
         <div className="card" style={{ marginBottom: 20, textAlign: "center", background: pct >= 60 ? "rgba(63,122,93,0.08)" : "rgba(178,58,72,0.08)" }}>
           <div style={{ display: "flex", justifyContent: "center", gap: 40, alignItems: "center", flexWrap: "wrap" }}>
             <div>
@@ -1675,7 +1644,6 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
           </div>
         </div>
 
-        {/* Review Navigation */}
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
           <span style={{ fontWeight: 600, fontSize: 14 }}>Question {reviewIndex + 1} of {finished.total}</span>
           <div style={{ display: "flex", gap: 6, flex: 1 }}>
@@ -1700,7 +1668,6 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
           </div>
         </div>
 
-        {/* Question Review Card */}
         <div className="card" style={{ maxWidth: 800, margin: "0 auto" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
             <div style={{ fontWeight: 600, fontSize: 16 }}>
@@ -1783,7 +1750,6 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
           )}
         </div>
 
-        {/* Navigation Buttons */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 16 }}>
           <div style={{ display: "flex", gap: 8 }}>
             <button className="btn btn-outline" disabled={reviewIndex === 0} onClick={() => setReviewIndex(reviewIndex - 1)}>
@@ -1828,9 +1794,11 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
 
   if (started && exam) {
     const isLast = qIndex === exam.totalQuestions - 1;
-    const mm = Math.floor(secondsLeft / 60), ss = secondsLeft % 60;
+    const mm = Math.floor(secondsLeft / 60);
+    const ss = secondsLeft % 60;
     const low = secondsLeft <= 30;
     const totalAnswered = Object.keys(answers).length;
+    const isDocFile = fileType === 'doc' || fileType === 'docx';
     
     const questions = pdfQuestions.length > 0 ? pdfQuestions : 
       Array.from({ length: exam.totalQuestions }, (_, i) => ({
@@ -1840,11 +1808,9 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
       }));
 
     const currentQuestion = questions[qIndex] || questions[0];
-    const isDocFile = fileType === 'doc' || fileType === 'docx';
 
     return (
       <div>
-        {/* Header with timer and progress */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
           <div>
             <div className="page-title font-display" style={{ marginBottom: 0 }}>{exam.title}</div>
@@ -1858,16 +1824,13 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
           <div className={`timer-badge ${low ? "low" : ""}`}><Timer size={16} /> {pad(mm)}:{pad(ss)}</div>
         </div>
 
-        {/* Question progress dots */}
         <div className="q-progress">
           {Array.from({ length: exam.totalQuestions }).map((_, i) => (
             <div key={i} className={`q-dot ${i === qIndex ? "current" : answers[i] !== undefined ? "answered" : ""}`} onClick={() => setQIndex(i)}>{i + 1}</div>
           ))}
         </div>
 
-        {/* Main content - centered question and options */}
         <div className="card" style={{ maxWidth: 800, margin: "0 auto" }}>
-          {/* File type indicator */}
           {isDocFile && (
             <div className="notice" style={{ marginBottom: 16, background: "#FFF8E1", borderColor: "#FFC107" }}>
               <AlertTriangle size={16} style={{ flexShrink: 0, color: "#FF6F00" }} />
@@ -1878,7 +1841,6 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
             </div>
           )}
 
-          {/* Question number and status */}
           <div style={{ fontWeight: 600, marginBottom: 12, fontSize: 16 }}>
             Question {qIndex + 1}
             {answers[qIndex] !== undefined && (
@@ -1888,7 +1850,6 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
             )}
           </div>
           
-          {/* Question Text */}
           <div style={{ 
             marginBottom: 20, 
             padding: 16, 
@@ -1900,7 +1861,6 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
             {currentQuestion.text || `Question ${qIndex + 1}`}
           </div>
           
-          {/* Options */}
           <div style={{ fontWeight: 600, marginBottom: 12, fontSize: 14, color: "var(--muted)" }}>Select your answer:</div>
           {currentQuestion.options && currentQuestion.options.length > 0 ? (
             currentQuestion.options.map((option, oi) => {
@@ -1923,7 +1883,6 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
             ))
           )}
 
-          {/* Extraction status */}
           {pdfQuestions.length > 0 && !isDocFile && (
             <div style={{ marginTop: 16, fontSize: 12, color: "var(--success)", textAlign: "center" }}>
               ✅ {pdfQuestions.length} questions extracted. Select your answer below.
@@ -1941,7 +1900,6 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
           )}
         </div>
 
-        {/* Navigation Buttons */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 16 }}>
           <div style={{ display: "flex", gap: 8 }}>
             <button className="btn btn-outline" disabled={qIndex === 0} onClick={() => setQIndex(qIndex - 1)}>
@@ -1968,7 +1926,6 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
           </div>
         </div>
 
-        {/* Confirmation Dialog */}
         {showConfirmFinish && (
           <div style={{
             position: "fixed",
