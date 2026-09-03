@@ -1,4 +1,4 @@
-import { supabase, db } from './supabase';
+import { supabase } from './supabase';
 import React, { useState, useEffect, useRef } from "react";
 import {
   Users, ClipboardList, CalendarCheck, Link2, PlusCircle, Trash2, Clock,
@@ -27,7 +27,7 @@ const STORAGE_KEYS = {
 };
 
 const DEFAULT_ADMIN = { username: "admin", password: "admin123" };
-const DEFAULT_SETTINGS = { title: " Exam Place", subtitle: "Mock Tests & Attendance" };
+const DEFAULT_SETTINGS = { title: "Exam Place", subtitle: "Mock Tests & Attendance" };
 
 async function loadKey(key, fallback) {
   try {
@@ -259,6 +259,7 @@ export default function App() {
     toastTimer.current = setTimeout(() => setToast(null), 3200);
   }
 
+  // Load data from Supabase and localStorage
   useEffect(() => {
     (async () => {
       try {
@@ -267,7 +268,18 @@ export default function App() {
           .from('students')
           .select('*');
         
-        if (studentsError) throw studentsError;
+        if (studentsError) {
+          console.error('Supabase load error:', studentsError);
+          // Fallback to localStorage
+          const s = await loadKey(STORAGE_KEYS.students, []);
+          setStudents(s);
+        } else {
+          setStudents(studentsData || []);
+          // Save to localStorage as backup
+          if (studentsData && studentsData.length > 0) {
+            await saveKey(STORAGE_KEYS.students, studentsData);
+          }
+        }
         
         // Load other data from localStorage
         const [n, e, a, r, no, ac, fa, se] = await Promise.all([
@@ -281,7 +293,6 @@ export default function App() {
           loadKey(STORAGE_KEYS.settings, DEFAULT_SETTINGS),
         ]);
         
-        setStudents(studentsData || []); 
         setNotes(n); 
         setExams(e); 
         setAttendance(a); 
@@ -292,8 +303,8 @@ export default function App() {
         setSettings(se);
         setLoading(false);
       } catch (error) {
-        console.error('Error loading data from Supabase:', error);
-        // Fallback to localStorage
+        console.error('Error loading data:', error);
+        // Fallback to localStorage for everything
         const [s, n, e, a, r, no, ac, fa, se] = await Promise.all([
           loadKey(STORAGE_KEYS.students, []),
           loadKey(STORAGE_KEYS.notes, []),
@@ -339,7 +350,6 @@ export default function App() {
     restorePDFs();
   }, []);
 
-  // Simplified persist functions - students handled by Supabase
   const persistNotes = (v) => { setNotes(v); saveKey(STORAGE_KEYS.notes, v); };
   const persistExams = (v) => { setExams(v); saveKey(STORAGE_KEYS.exams, v); };
   const persistAttendance = (v) => { setAttendance(v); saveKey(STORAGE_KEYS.attendance, v); };
@@ -885,7 +895,12 @@ function StudentsTab({ students, setStudents, showToast }) {
         }])
         .select();
       
-      if (error) throw error;
+      if (error) {
+        console.error('Supabase insert error:', error);
+        showToast(`Error: ${error.message}`, 'error');
+        setIsLoading(false);
+        return;
+      }
       
       setStudents([...students, rec]);
       setName(""); 
@@ -894,8 +909,8 @@ function StudentsTab({ students, setStudents, showToast }) {
       setPassword(genPin());
       showToast(`${rec.name} added — share their login (username + password) with them.`);
     } catch (error) {
-      console.error('Error adding student to Supabase:', error);
-      showToast('Failed to add student to database. Please try again.', 'error');
+      console.error('Error adding student:', error);
+      showToast('Failed to add student. Please check console for details.', 'error');
     } finally {
       setIsLoading(false);
     }
@@ -908,7 +923,11 @@ function StudentsTab({ students, setStudents, showToast }) {
         .delete()
         .eq('id', id);
       
-      if (error) throw error;
+      if (error) {
+        console.error('Supabase delete error:', error);
+        showToast(`Error: ${error.message}`, 'error');
+        return;
+      }
       
       setStudents(students.filter((s) => s.id !== id)); 
       showToast("Student removed."); 
@@ -1053,6 +1072,7 @@ function NotesTab({ notes, setNotes, currentUser, showToast }) {
     </div>
   );
 }
+
 
 
 
