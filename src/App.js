@@ -1,3 +1,4 @@
+import { supabase, db } from './supabase';
 import React, { useState, useEffect, useRef } from "react";
 import {
   Users, ClipboardList, CalendarCheck, Link2, PlusCircle, Trash2, Clock,
@@ -258,55 +259,60 @@ export default function App() {
     toastTimer.current = setTimeout(() => setToast(null), 3200);
   }
 
-  useEffect(() => {
-    (async () => {
-      const [s, n, e, a, r, no, ac, fa, se] = await Promise.all([
-        loadKey(STORAGE_KEYS.students, []),
-        loadKey(STORAGE_KEYS.notes, []),
-        loadKey(STORAGE_KEYS.exams, []),
-        loadKey(STORAGE_KEYS.attendance, {}),
-        loadKey(STORAGE_KEYS.results, []),
-        loadKey(STORAGE_KEYS.notifications, []),
-        loadKey(STORAGE_KEYS.adminCreds, DEFAULT_ADMIN),
-        loadKey(STORAGE_KEYS.facultyAccounts, []),
-        loadKey(STORAGE_KEYS.settings, DEFAULT_SETTINGS),
+ // Replace the useEffect that loads data with:
+useEffect(() => {
+  (async () => {
+    try {
+      // Load all data from Supabase
+      const [students, notes, exams, attendance, results, notifications, adminCreds, facultyAccounts, settings] = await Promise.all([
+        db.getStudents(),
+        db.getNotes(),
+        db.getExams(),
+        db.getAttendance().then(data => {
+          // Convert attendance array to object format
+          const attObj = {};
+          data.forEach(item => {
+            if (!attObj[item.date]) attObj[item.date] = {};
+            attObj[item.date][item.student_id] = item.status;
+          });
+          return attObj;
+        }),
+        db.getResults(),
+        [], // notifications - you can add notifications table later
+        db.getAdminCreds().then(data => ({ username: data.username, password: data.password })),
+        db.getFaculty(),
+        db.getSettings().then(data => ({ title: data.title, subtitle: data.subtitle || '' }))
       ]);
       
-      let studentsData = s;
-      if (studentsData.length === 0) {
-        studentsData = [
-          { 
-            id: uid(), 
-            name: "Demo Student 1", 
-            username: "demo1", 
-            phone: "+91 98765 43210", 
-            password: "demo123", 
-            addedAt: new Date().toISOString() 
-          },
-          { 
-            id: uid(), 
-            name: "Demo Student 2", 
-            username: "demo2", 
-            phone: "+91 98765 43211", 
-            password: "demo123", 
-            addedAt: new Date().toISOString() 
-          }
-        ];
-        await saveKey(STORAGE_KEYS.students, studentsData);
-      }
-      
-      setStudents(studentsData); 
-      setNotes(n); 
-      setExams(e); 
-      setAttendance(a); 
-      setResults(r);
-      setNotifications(no); 
-      setAdminCreds(ac); 
-      setFacultyAccounts(fa); 
-      setSettings(se);
+      setStudents(students || []);
+      setNotes(notes || []);
+      setExams(exams || []);
+      setAttendance(attendance || {});
+      setResults(results || []);
+      setNotifications(notifications || []);
+      setAdminCreds(adminCreds || DEFAULT_ADMIN);
+      setFacultyAccounts(facultyAccounts || []);
+      setSettings(settings || DEFAULT_SETTINGS);
       setLoading(false);
-    })();
-  }, []);
+    } catch (error) {
+      console.error('Error loading data:', error);
+      // Fallback to localStorage if Supabase fails
+      // Keep your existing localStorage code as fallback
+      setLoading(false);
+    }
+  })();
+}, []);
+
+// Update persist functions:
+const persistStudents = async (v) => { 
+  setStudents(v); 
+  // Sync with Supabase
+  try {
+    for (const student of v) {
+      await db.addStudent(student);
+    }
+  } catch (e) { console.error('Failed to sync students:', e); }
+};
 
   useEffect(() => {
     const restorePDFs = async () => {
@@ -512,36 +518,38 @@ function LoginScreen({ settings, adminCreds, facultyAccounts, students, onLogin,
     }
 
     // STUDENT LOGIN
-    let student = students.find(
-      (st) => st.username && st.username.toLowerCase() === trimmedId.toLowerCase()
-    );
+   // In LoginScreen, replace the student login with:
+const { data: studentData, error } = await supabase
+  .from('students')
+  .select('*')
+  .eq('username', trimmedId.toLowerCase())
+  .single();
 
-    if (student) {
-      if (student.password === trimmedPassword) {
-        onLogin({ 
-          role: "student", 
-          id: student.id, 
-          name: student.name, 
-          username: student.username 
-        });
-        showToast(`Welcome ${student.name}!`, "success");
-        setIsLoading(false);
-        return;
-      } else {
-        setLoginError("Incorrect password. Please try again.");
-        showToast("❌ Incorrect password. Please try again.", "error");
-        setPassword('');
-        setIsLoading(false);
-        return;
-      }
-    } else {
-      setLoginError(`No student found with username "${trimmedId}".`);
-      showToast(`❌ No student found with username "${trimmedId}".`, "error");
-      setPassword('');
-      setIsLoading(false);
-      return;
-    }
+if (studentData) {
+  if (studentData.password === trimmedPassword) {
+    onLogin({ 
+      role: "student", 
+      id: studentData.id, 
+      name: studentData.name, 
+      username: studentData.username 
+    });
+    showToast(`Welcome ${studentData.name}!`, "success");
+    setIsLoading(false);
+    return;
+  } else {
+    setLoginError("Incorrect password. Please try again.");
+    showToast("❌ Incorrect password. Please try again.", "error");
+    setPassword('');
+    setIsLoading(false);
+    return;
   }
+} else {
+  setLoginError(`No student found with username "${trimmedId}".`);
+  showToast(`❌ No student found with username "${trimmedId}".`, "error");
+  setPassword('');
+  setIsLoading(false);
+  return;
+}
 
   function submitAdmin() {
     const trimmedId = idField.trim();
