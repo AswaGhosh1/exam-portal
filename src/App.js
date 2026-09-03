@@ -261,28 +261,61 @@ export default function App() {
 
   useEffect(() => {
     (async () => {
-      const [s, n, e, a, r, no, ac, fa, se] = await Promise.all([
-        loadKey(STORAGE_KEYS.students, []),
-        loadKey(STORAGE_KEYS.notes, []),
-        loadKey(STORAGE_KEYS.exams, []),
-        loadKey(STORAGE_KEYS.attendance, {}),
-        loadKey(STORAGE_KEYS.results, []),
-        loadKey(STORAGE_KEYS.notifications, []),
-        loadKey(STORAGE_KEYS.adminCreds, DEFAULT_ADMIN),
-        loadKey(STORAGE_KEYS.facultyAccounts, []),
-        loadKey(STORAGE_KEYS.settings, DEFAULT_SETTINGS),
-      ]);
-      
-      setStudents(s); 
-      setNotes(n); 
-      setExams(e); 
-      setAttendance(a); 
-      setResults(r);
-      setNotifications(no); 
-      setAdminCreds(ac); 
-      setFacultyAccounts(fa); 
-      setSettings(se);
-      setLoading(false);
+      try {
+        // Load students from Supabase
+        const { data: studentsData, error: studentsError } = await supabase
+          .from('students')
+          .select('*');
+        
+        if (studentsError) throw studentsError;
+        
+        // Load other data from localStorage
+        const [n, e, a, r, no, ac, fa, se] = await Promise.all([
+          loadKey(STORAGE_KEYS.notes, []),
+          loadKey(STORAGE_KEYS.exams, []),
+          loadKey(STORAGE_KEYS.attendance, {}),
+          loadKey(STORAGE_KEYS.results, []),
+          loadKey(STORAGE_KEYS.notifications, []),
+          loadKey(STORAGE_KEYS.adminCreds, DEFAULT_ADMIN),
+          loadKey(STORAGE_KEYS.facultyAccounts, []),
+          loadKey(STORAGE_KEYS.settings, DEFAULT_SETTINGS),
+        ]);
+        
+        setStudents(studentsData || []); 
+        setNotes(n); 
+        setExams(e); 
+        setAttendance(a); 
+        setResults(r);
+        setNotifications(no); 
+        setAdminCreds(ac); 
+        setFacultyAccounts(fa); 
+        setSettings(se);
+        setLoading(false);
+      } catch (error) {
+        console.error('Error loading data from Supabase:', error);
+        // Fallback to localStorage
+        const [s, n, e, a, r, no, ac, fa, se] = await Promise.all([
+          loadKey(STORAGE_KEYS.students, []),
+          loadKey(STORAGE_KEYS.notes, []),
+          loadKey(STORAGE_KEYS.exams, []),
+          loadKey(STORAGE_KEYS.attendance, {}),
+          loadKey(STORAGE_KEYS.results, []),
+          loadKey(STORAGE_KEYS.notifications, []),
+          loadKey(STORAGE_KEYS.adminCreds, DEFAULT_ADMIN),
+          loadKey(STORAGE_KEYS.facultyAccounts, []),
+          loadKey(STORAGE_KEYS.settings, DEFAULT_SETTINGS),
+        ]);
+        setStudents(s); 
+        setNotes(n); 
+        setExams(e); 
+        setAttendance(a); 
+        setResults(r);
+        setNotifications(no); 
+        setAdminCreds(ac); 
+        setFacultyAccounts(fa); 
+        setSettings(se);
+        setLoading(false);
+      }
     })();
   }, []);
 
@@ -306,7 +339,7 @@ export default function App() {
     restorePDFs();
   }, []);
 
-  const persistStudents = (v) => { setStudents(v); saveKey(STORAGE_KEYS.students, v); };
+  // Simplified persist functions - students handled by Supabase
   const persistNotes = (v) => { setNotes(v); saveKey(STORAGE_KEYS.notes, v); };
   const persistExams = (v) => { setExams(v); saveKey(STORAGE_KEYS.exams, v); };
   const persistAttendance = (v) => { setAttendance(v); saveKey(STORAGE_KEYS.attendance, v); };
@@ -378,7 +411,7 @@ export default function App() {
             <Dashboard students={students} exams={exams} notes={notes} attendance={attendance} results={results} currentUser={currentUser} setTab={setTab} />
           )}
           {tab === "students" && currentUser.role === "faculty" && (
-            <StudentsTab students={students} setStudents={persistStudents} showToast={showToast} />
+            <StudentsTab students={students} setStudents={setStudents} showToast={showToast} />
           )}
           {tab === "notes" && (
             <NotesTab notes={notes} setNotes={persistNotes} currentUser={currentUser} showToast={showToast} />
@@ -815,16 +848,20 @@ function StudentsTab({ students, setStudents, showToast }) {
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState(genPin());
   const [search, setSearch] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
 
-  function addStudent() {
+  async function addStudent() {
     if (!name.trim() || !username.trim() || !phone.trim() || !password.trim()) {
       showToast("Fill in name, username, phone and a password.", "error"); 
       return; 
     }
+    
     if (students.some((s) => s.username.toLowerCase() === username.trim().toLowerCase())) { 
       showToast("A student with this username already exists.", "error"); 
       return; 
     }
+    
+    setIsLoading(true);
     
     const rec = { 
       id: uid(), 
@@ -834,17 +871,51 @@ function StudentsTab({ students, setStudents, showToast }) {
       password: password.trim(), 
       addedAt: new Date().toISOString() 
     };
-    setStudents([...students, rec]);
-    setName(""); 
-    setUsername(""); 
-    setPhone(""); 
-    setPassword(genPin());
-    showToast(`${rec.name} added — share their login (username + password) with them.`);
+    
+    try {
+      const { data, error } = await supabase
+        .from('students')
+        .insert([{
+          id: rec.id,
+          name: rec.name,
+          username: rec.username,
+          password: rec.password,
+          phone: rec.phone,
+          added_at: rec.addedAt
+        }])
+        .select();
+      
+      if (error) throw error;
+      
+      setStudents([...students, rec]);
+      setName(""); 
+      setUsername(""); 
+      setPhone(""); 
+      setPassword(genPin());
+      showToast(`${rec.name} added — share their login (username + password) with them.`);
+    } catch (error) {
+      console.error('Error adding student to Supabase:', error);
+      showToast('Failed to add student to database. Please try again.', 'error');
+    } finally {
+      setIsLoading(false);
+    }
   }
   
-  function removeStudent(id) { 
-    setStudents(students.filter((s) => s.id !== id)); 
-    showToast("Student removed."); 
+  async function removeStudent(id) { 
+    try {
+      const { error } = await supabase
+        .from('students')
+        .delete()
+        .eq('id', id);
+      
+      if (error) throw error;
+      
+      setStudents(students.filter((s) => s.id !== id)); 
+      showToast("Student removed."); 
+    } catch (error) {
+      console.error('Error removing student:', error);
+      showToast('Failed to remove student.', 'error');
+    }
   }
 
   const filtered = students.filter((s) => 
@@ -870,7 +941,9 @@ function StudentsTab({ students, setStudents, showToast }) {
               <button className="btn btn-outline btn-sm" onClick={() => setPassword(genPin())} title="Generate"><RefreshCw size={13} /></button>
             </div>
           </div>
-          <button className="btn btn-primary" onClick={addStudent}><PlusCircle size={15} /> Add student</button>
+          <button className="btn btn-primary" onClick={addStudent} disabled={isLoading}>
+            <PlusCircle size={15} /> {isLoading ? "Adding..." : "Add student"}
+          </button>
         </div>
       </div>
 
@@ -980,6 +1053,8 @@ function NotesTab({ notes, setNotes, currentUser, showToast }) {
     </div>
   );
 }
+
+
 
 /* ---------------------------------- Exams ---------------------------------- */
 
