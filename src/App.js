@@ -27,7 +27,7 @@ const STORAGE_KEYS = {
 };
 
 const DEFAULT_ADMIN = { username: "admin", password: "admin123" };
-const DEFAULT_SETTINGS = { title: "Exam Place", subtitle: "Mock Tests & Attendance" };
+const DEFAULT_SETTINGS = { title: " Exam Place", subtitle: "Mock Tests & Attendance" };
 
 async function loadKey(key, fallback) {
   try {
@@ -259,22 +259,23 @@ export default function App() {
     toastTimer.current = setTimeout(() => setToast(null), 3200);
   }
 
-  // Load data from Supabase
   useEffect(() => {
     (async () => {
       try {
-        // Load students
+        // Load students from Supabase
         const { data: studentsData, error: studentsError } = await supabase
           .from('students')
           .select('*');
+        
         if (studentsError) console.error('Students error:', studentsError);
-
-        // Load faculty
+        
+        // Load faculty from Supabase
         const { data: facultyData, error: facultyError } = await supabase
           .from('faculty_accounts')
           .select('*');
+        
         if (facultyError) console.error('Faculty error:', facultyError);
-
+        
         // Load other data from localStorage
         const [n, e, a, r, no, ac, se] = await Promise.all([
           loadKey(STORAGE_KEYS.notes, []),
@@ -285,15 +286,15 @@ export default function App() {
           loadKey(STORAGE_KEYS.adminCreds, DEFAULT_ADMIN),
           loadKey(STORAGE_KEYS.settings, DEFAULT_SETTINGS),
         ]);
-
-        setStudents(studentsData || []);
+        
+        setStudents(studentsData || []); 
         setFacultyAccounts(facultyData || []);
-        setNotes(n);
-        setExams(e);
-        setAttendance(a);
+        setNotes(n); 
+        setExams(e); 
+        setAttendance(a); 
         setResults(r);
-        setNotifications(no);
-        setAdminCreds(ac);
+        setNotifications(no); 
+        setAdminCreds(ac); 
         setSettings(se);
         setLoading(false);
       } catch (error) {
@@ -310,14 +311,14 @@ export default function App() {
           loadKey(STORAGE_KEYS.facultyAccounts, []),
           loadKey(STORAGE_KEYS.settings, DEFAULT_SETTINGS),
         ]);
-        setStudents(s);
-        setNotes(n);
-        setExams(e);
-        setAttendance(a);
+        setStudents(s); 
+        setNotes(n); 
+        setExams(e); 
+        setAttendance(a); 
         setResults(r);
-        setNotifications(no);
-        setAdminCreds(ac);
-        setFacultyAccounts(fa);
+        setNotifications(no); 
+        setAdminCreds(ac); 
+        setFacultyAccounts(fa); 
         setSettings(se);
         setLoading(false);
       }
@@ -344,6 +345,7 @@ export default function App() {
     restorePDFs();
   }, []);
 
+  const persistStudents = (v) => { setStudents(v); saveKey(STORAGE_KEYS.students, v); };
   const persistNotes = (v) => { setNotes(v); saveKey(STORAGE_KEYS.notes, v); };
   const persistExams = (v) => { setExams(v); saveKey(STORAGE_KEYS.exams, v); };
   const persistAttendance = (v) => { setAttendance(v); saveKey(STORAGE_KEYS.attendance, v); };
@@ -415,7 +417,7 @@ export default function App() {
             <Dashboard students={students} exams={exams} notes={notes} attendance={attendance} results={results} currentUser={currentUser} setTab={setTab} />
           )}
           {tab === "students" && currentUser.role === "faculty" && (
-            <StudentsTab students={students} setStudents={setStudents} showToast={showToast} />
+            <StudentsTab students={students} setStudents={persistStudents} showToast={showToast} />
           )}
           {tab === "notes" && (
             <NotesTab notes={notes} setNotes={persistNotes} currentUser={currentUser} showToast={showToast} />
@@ -509,7 +511,6 @@ function LoginScreen({ settings, adminCreds, facultyAccounts, students, onLogin,
     setLoginError("");
 
     if (role === "faculty") {
-      // FACULTY LOGIN - Check Supabase
       try {
         const { data, error } = await supabase
           .from('faculty_accounts')
@@ -906,20 +907,16 @@ function StudentsTab({ students, setStudents, showToast }) {
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState(genPin());
   const [search, setSearch] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
 
-  async function addStudent() {
+  function addStudent() {
     if (!name.trim() || !username.trim() || !phone.trim() || !password.trim()) {
       showToast("Fill in name, username, phone and a password.", "error"); 
       return; 
     }
-    
     if (students.some((s) => s.username.toLowerCase() === username.trim().toLowerCase())) { 
       showToast("A student with this username already exists.", "error"); 
       return; 
     }
-    
-    setIsLoading(true);
     
     const rec = { 
       id: uid(), 
@@ -929,60 +926,17 @@ function StudentsTab({ students, setStudents, showToast }) {
       password: password.trim(), 
       addedAt: new Date().toISOString() 
     };
-    
-    try {
-      const { data, error } = await supabase
-        .from('students')
-        .insert([{
-          id: rec.id,
-          name: rec.name,
-          username: rec.username,
-          password: rec.password,
-          phone: rec.phone,
-          added_at: rec.addedAt
-        }])
-        .select();
-      
-      if (error) {
-        console.error('Supabase insert error:', error);
-        showToast(`Error: ${error.message}`, 'error');
-        setIsLoading(false);
-        return;
-      }
-      
-      setStudents([...students, rec]);
-      setName(""); 
-      setUsername(""); 
-      setPhone(""); 
-      setPassword(genPin());
-      showToast(`${rec.name} added — share their login (username + password) with them.`);
-    } catch (error) {
-      console.error('Error adding student:', error);
-      showToast('Failed to add student.', 'error');
-    } finally {
-      setIsLoading(false);
-    }
+    setStudents([...students, rec]);
+    setName(""); 
+    setUsername(""); 
+    setPhone(""); 
+    setPassword(genPin());
+    showToast(`${rec.name} added — share their login (username + password) with them.`);
   }
   
-  async function removeStudent(id) { 
-    try {
-      const { error } = await supabase
-        .from('students')
-        .delete()
-        .eq('id', id);
-      
-      if (error) {
-        console.error('Supabase delete error:', error);
-        showToast(`Error: ${error.message}`, 'error');
-        return;
-      }
-      
-      setStudents(students.filter((s) => s.id !== id)); 
-      showToast("Student removed."); 
-    } catch (error) {
-      console.error('Error removing student:', error);
-      showToast('Failed to remove student.', 'error');
-    }
+  function removeStudent(id) { 
+    setStudents(students.filter((s) => s.id !== id)); 
+    showToast("Student removed."); 
   }
 
   const filtered = students.filter((s) => 
@@ -1008,9 +962,7 @@ function StudentsTab({ students, setStudents, showToast }) {
               <button className="btn btn-outline btn-sm" onClick={() => setPassword(genPin())} title="Generate"><RefreshCw size={13} /></button>
             </div>
           </div>
-          <button className="btn btn-primary" onClick={addStudent} disabled={isLoading}>
-            <PlusCircle size={15} /> {isLoading ? "Adding..." : "Add student"}
-          </button>
+          <button className="btn btn-primary" onClick={addStudent}><PlusCircle size={15} /> Add student</button>
         </div>
       </div>
 
@@ -1039,7 +991,7 @@ function StudentsTab({ students, setStudents, showToast }) {
         )}
         <div className="notice" style={{ marginTop: 14 }}>
           <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 1 }} />
-          <div>Passwords are shown in plain text here to make sharing easy in this demo.</div>
+          <div>Passwords are shown in plain text here to make sharing easy in this demo. A production rollout should hash passwords and never display them after creation.</div>
         </div>
       </div>
     </div>
@@ -1092,6 +1044,10 @@ function NotesTab({ notes, setNotes, currentUser, showToast }) {
             </label>
             {fileInfo && <span style={{ fontSize: 12.5, color: "var(--muted)" }}>{fileInfo.name}</span>}
           </div>
+          <div className="notice" style={{ marginBottom: 14 }}>
+            <AlertTriangle size={15} style={{ flexShrink: 0, marginTop: 1 }} />
+            <div>The title and description are saved for everyone. The PDF itself only previews in this browser session — permanent file storage needs a small backend (e.g. an S3 bucket), which I can help set up.</div>
+          </div>
           <button className="btn btn-primary" onClick={addNote}><PlusCircle size={15} /> Save note</button>
         </div>
       )}
@@ -1105,7 +1061,7 @@ function NotesTab({ notes, setNotes, currentUser, showToast }) {
                 <div>
                   <div style={{ fontWeight: 600 }}>{n.title} {n.subject && <span className="pill pill-gray" style={{ marginLeft: 6 }}>{n.subject}</span>}</div>
                   {n.description && <div style={{ fontSize: 12.5, color: "var(--ink-soft)", marginTop: 3 }}>{n.description}</div>}
-                  <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 4 }}>{fmtDate(n.uploadedAt)}</div>
+                  <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 4 }}>{n.fileName ? `${n.fileName} · ` : ""}{fmtDate(n.uploadedAt)}</div>
                 </div>
                 {canEdit && <button className="btn btn-danger btn-sm" onClick={() => removeNote(n.id)}><Trash2 size={13} /></button>}
               </div>
@@ -1116,6 +1072,7 @@ function NotesTab({ notes, setNotes, currentUser, showToast }) {
     </div>
   );
 }
+
 
 
 /* ---------------------------------- Exams ---------------------------------- */
