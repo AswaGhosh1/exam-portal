@@ -418,6 +418,7 @@ function LoginScreen({ settings, adminCreds, facultyAccounts, students, onLogin,
   const [idField, setIdField] = useState("");
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [loginError, setLoginError] = useState("");
 
   // Keyboard shortcut for desktop
   useEffect(() => {
@@ -435,6 +436,7 @@ function LoginScreen({ settings, adminCreds, facultyAccounts, students, onLogin,
     setAdminMode(true);
     setIdField("");
     setPassword("");
+    setLoginError("");
     if (typeof window !== "undefined") window.location.hash = "admin-secret";
   }
 
@@ -442,60 +444,118 @@ function LoginScreen({ settings, adminCreds, facultyAccounts, students, onLogin,
     setAdminMode(false);
     setIdField("");
     setPassword("");
+    setLoginError("");
     if (typeof window !== "undefined" && window.location.hash === "#admin-secret") {
       window.location.hash = "";
     }
   }
 
   function submitRegular() {
-    // Trim inputs for better matching
     const trimmedId = idField.trim();
     const trimmedPassword = password.trim();
     
     if (!trimmedId || !trimmedPassword) {
+      setLoginError("Please enter your username and password.");
       showToast("Please enter your username and password.", "error");
       return;
     }
 
     setIsLoading(true);
+    setLoginError("");
+
+    // Log for debugging
+    console.log("Login attempt:", {
+      role: role,
+      username: trimmedId,
+      totalStudents: students.length,
+      totalFaculty: facultyAccounts.length
+    });
 
     if (role === "faculty") {
-      // Faculty login - case insensitive username
       const acc = facultyAccounts.find(
         (f) => f.username.toLowerCase() === trimmedId.toLowerCase() && f.password === trimmedPassword
       );
       if (acc) {
         onLogin({ role: "faculty", id: acc.id, name: acc.name });
         showToast(`Welcome ${acc.name}!`, "success");
+        setIsLoading(false);
+        return;
       } else {
+        setLoginError("Incorrect faculty username or password.");
         showToast("❌ Incorrect faculty username or password.", "error");
         setPassword('');
-      }
-    } else {
-      // Student login - case insensitive username
-      const student = students.find(
-        (st) => st.username && st.username.toLowerCase() === trimmedId.toLowerCase()
-      );
-      
-      if (student) {
-        if (student.password === trimmedPassword) {
-          onLogin({ 
-            role: "student", 
-            id: student.id, 
-            name: student.name, 
-            username: student.username 
-          });
-          showToast(`Welcome ${student.name}!`, "success");
-        } else {
-          showToast("❌ Incorrect password. Please try again.", "error");
-          setPassword('');
-        }
-      } else {
-        showToast("❌ No student found with this username. Please check with your faculty.", "error");
-        setPassword('');
+        setIsLoading(false);
+        return;
       }
     }
-    setIsLoading(false);
+
+    // STUDENT LOGIN - Check all possible fields
+    let student = null;
+    let matchedField = "";
+
+    // Log all students for debugging
+    console.log("All students:", students.map(s => ({ 
+      name: s.name, 
+      username: s.username, 
+      email: s.email 
+    })));
+
+    // Method 1: Try username
+    student = students.find(
+      (st) => st.username && st.username.toLowerCase() === trimmedId.toLowerCase()
+    );
+    if (student) {
+      matchedField = "username";
+    }
+
+    // Method 2: Try email (backward compatibility)
+    if (!student) {
+      student = students.find(
+        (st) => st.email && st.email.toLowerCase() === trimmedId.toLowerCase()
+      );
+      if (student) {
+        matchedField = "email";
+      }
+    }
+
+    // Method 3: Try name (last resort)
+    if (!student) {
+      student = students.find(
+        (st) => st.name && st.name.toLowerCase() === trimmedId.toLowerCase()
+      );
+      if (student) {
+        matchedField = "name";
+      }
+    }
+
+    console.log("Student found:", student ? `${student.name} (matched by ${matchedField})` : "None");
+
+    if (student) {
+      if (student.password === trimmedPassword) {
+        onLogin({ 
+          role: "student", 
+          id: student.id, 
+          name: student.name, 
+          username: student.username || student.email || student.name,
+          email: student.email
+        });
+        showToast(`Welcome ${student.name}!`, "success");
+        setIsLoading(false);
+        return;
+      } else {
+        setLoginError("Incorrect password. Please try again.");
+        showToast("❌ Incorrect password. Please try again.", "error");
+        setPassword('');
+        setIsLoading(false);
+        return;
+      }
+    } else {
+      setLoginError(`No student found with "${trimmedId}". Please check your username.`);
+      showToast(`❌ No student found. Please check your username.`, "error");
+      setPassword('');
+      setIsLoading(false);
+      return;
+    }
   }
 
   function submitAdmin() {
@@ -582,31 +642,48 @@ function LoginScreen({ settings, adminCreds, facultyAccounts, students, onLogin,
           <div style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 3 }}>
             Sign in to continue
           </div>
+          <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 6, opacity: 0.7 }}>
+            {students.length} students registered
+          </div>
         </div>
 
         <div className="role-pills">
           <div 
             className={`role-pill ${role === "student" ? "active" : ""}`} 
-            onClick={() => { setRole("student"); setIdField(""); setPassword(""); }}
+            onClick={() => { setRole("student"); setIdField(""); setPassword(""); setLoginError(""); }}
             style={{ padding: "12px 4px", fontSize: "14px" }}
           >
             <GraduationCap size={16} /> Student
           </div>
           <div 
             className={`role-pill ${role === "faculty" ? "active" : ""}`} 
-            onClick={() => { setRole("faculty"); setIdField(""); setPassword(""); }}
+            onClick={() => { setRole("faculty"); setIdField(""); setPassword(""); setLoginError(""); }}
             style={{ padding: "12px 4px", fontSize: "14px" }}
           >
             <Users size={16} /> Faculty
           </div>
         </div>
 
+        {loginError && (
+          <div style={{ 
+            background: "rgba(178,58,72,0.1)", 
+            border: "1px solid var(--danger)", 
+            borderRadius: "8px", 
+            padding: "10px 14px", 
+            marginBottom: 12,
+            color: "var(--danger)",
+            fontSize: "13px"
+          }}>
+            {loginError}
+          </div>
+        )}
+
         <div style={{ marginBottom: 12 }}>
-          <label className="field-label">{role === "student" ? "Username" : "Username"}</label>
+          <label className="field-label">{role === "student" ? "Username or Email" : "Username"}</label>
           <input 
             value={idField} 
             onChange={(e) => setIdField(e.target.value)} 
-            placeholder={role === "student" ? "Enter your username" : "Enter username"}
+            placeholder={role === "student" ? "Enter your username or email" : "Enter username"}
             style={{ fontSize: "16px", padding: "12px" }}
             autoCapitalize="off"
             autoCorrect="off"
@@ -637,21 +714,22 @@ function LoginScreen({ settings, adminCreds, facultyAccounts, students, onLogin,
         {role === "faculty" && (
           <div className="notice" style={{ marginTop: 16 }}>
             <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 1 }} />
-            <div>Faculty accounts are created by an admin — ask your administrator if you don't have one yet.</div>
+            <div>Faculty accounts are created by an admin. Contact your administrator if you don't have one.</div>
           </div>
         )}
         {role === "student" && (
           <div className="notice" style={{ marginTop: 16 }}>
             <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 1 }} />
-            <div>Use the username and password your faculty gave you when you were added to the roster.</div>
+            <div>Use your <strong>username</strong> (or email) and password to login. 
+            {students.length === 0 && <span style={{ display: "block", marginTop: 4, color: "var(--danger)" }}>⚠️ No students registered yet. Contact your faculty to create an account.</span>}</div>
           </div>
         )}
 
         <div style={{ textAlign: "center", marginTop: 18, fontSize: 10, color: "var(--muted)" }}>
-          🔒 Secure login
+          🔒 Secure login • {students.length} students • {facultyAccounts.length} faculty
         </div>
 
-        {/* Hidden admin tap area - tap 7 times on the bottom */}
+        {/* Hidden admin tap area */}
         <div 
           style={{ 
             position: "absolute", 
@@ -674,7 +752,6 @@ function LoginScreen({ settings, adminCreds, facultyAccounts, students, onLogin,
     </div>
   );
 }
-
 /* ---------------------------------- Dashboard ---------------------------------- */
 
 function Dashboard({ students, exams, notes, attendance, results, currentUser, setTab }) {
