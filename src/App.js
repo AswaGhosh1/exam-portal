@@ -27,7 +27,7 @@ const STORAGE_KEYS = {
 };
 
 const DEFAULT_ADMIN = { username: "admin", password: "admin123" };
-const DEFAULT_SETTINGS = { title: " Exam Place", subtitle: "Mock Tests & Attendance" };
+const DEFAULT_SETTINGS = { title: "Exam Place", subtitle: "Mock Tests & Attendance" };
 
 async function loadKey(key, fallback) {
   try {
@@ -261,7 +261,7 @@ export default function App() {
 
   // Load data from Supabase
   useEffect(() => {
-    (async () => {
+    const loadData = async () => {
       try {
         console.log('🔄 Loading data from Supabase...');
         
@@ -287,6 +287,10 @@ export default function App() {
           console.log('✅ Faculty loaded:', facultyData?.length || 0);
         }
         
+        // Update state
+        setStudents(studentsData || []);
+        setFacultyAccounts(facultyData || []);
+        
         // Load other data from localStorage
         const [n, e, a, r, no, ac, se] = await Promise.all([
           loadKey(STORAGE_KEYS.notes, []),
@@ -298,18 +302,16 @@ export default function App() {
           loadKey(STORAGE_KEYS.settings, DEFAULT_SETTINGS),
         ]);
         
-        setStudents(studentsData || []); 
-        setFacultyAccounts(facultyData || []);
-        setNotes(n); 
-        setExams(e); 
-        setAttendance(a); 
+        setNotes(n);
+        setExams(e);
+        setAttendance(a);
         setResults(r);
-        setNotifications(no); 
-        setAdminCreds(ac); 
+        setNotifications(no);
+        setAdminCreds(ac);
         setSettings(se);
         setLoading(false);
         
-        console.log('📊 Final counts - Students:', studentsData?.length || 0, 'Faculty:', facultyData?.length || 0);
+        console.log('📊 Final - Students:', studentsData?.length || 0, 'Faculty:', facultyData?.length || 0);
       } catch (error) {
         console.error('❌ Error loading data:', error);
         // Fallback to localStorage
@@ -324,18 +326,20 @@ export default function App() {
           loadKey(STORAGE_KEYS.facultyAccounts, []),
           loadKey(STORAGE_KEYS.settings, DEFAULT_SETTINGS),
         ]);
-        setStudents(s); 
-        setNotes(n); 
-        setExams(e); 
-        setAttendance(a); 
+        setStudents(s);
+        setNotes(n);
+        setExams(e);
+        setAttendance(a);
         setResults(r);
-        setNotifications(no); 
-        setAdminCreds(ac); 
-        setFacultyAccounts(fa); 
+        setNotifications(no);
+        setAdminCreds(ac);
+        setFacultyAccounts(fa);
         setSettings(se);
         setLoading(false);
       }
-    })();
+    };
+    
+    loadData();
   }, []);
 
   useEffect(() => {
