@@ -259,37 +259,38 @@ export default function App() {
     toastTimer.current = setTimeout(() => setToast(null), 3200);
   }
 
-  // Load data from Supabase
+  // Demo data for when Supabase is empty
+  const DEMO_STUDENTS = [
+    { id: 'student_001', name: 'John Doe', username: 'johndoe', password: 'password123', phone: '+91 98765 43210' },
+    { id: 'student_002', name: 'Jane Smith', username: 'janesmith', password: 'password456', phone: '+91 98765 43211' },
+    { id: 'student_003', name: 'Alice Johnson', username: 'alicej', password: 'password789', phone: '+91 98765 43212' }
+  ];
+
+  const DEMO_FACULTY = [
+    { id: 'faculty_001', name: 'Test Faculty', username: 'testfaculty', password: 'faculty123' }
+  ];
+
+  // Load data from Supabase with demo fallback
   useEffect(() => {
     const loadData = async () => {
       try {
         console.log('🔄 Loading data from Supabase...');
         
-        // Load students
-        const { data: studentsData, error: studentsError } = await supabase
-          .from('students')
-          .select('*');
+        // Load from Supabase
+        const [studentsResult, facultyResult] = await Promise.all([
+          supabase.from('students').select('*'),
+          supabase.from('faculty_accounts').select('*')
+        ]);
         
-        if (studentsError) {
-          console.error('❌ Students error:', studentsError);
-        } else {
-          console.log('✅ Students loaded:', studentsData?.length || 0);
-        }
+        console.log('📊 Supabase students:', studentsResult.data?.length || 0);
+        console.log('📊 Supabase faculty:', facultyResult.data?.length || 0);
         
-        // Load faculty
-        const { data: facultyData, error: facultyError } = await supabase
-          .from('faculty_accounts')
-          .select('*');
+        // Use Supabase data if available, otherwise use demo data
+        const finalStudents = studentsResult.data?.length > 0 ? studentsResult.data : DEMO_STUDENTS;
+        const finalFaculty = facultyResult.data?.length > 0 ? facultyResult.data : DEMO_FACULTY;
         
-        if (facultyError) {
-          console.error('❌ Faculty error:', facultyError);
-        } else {
-          console.log('✅ Faculty loaded:', facultyData?.length || 0);
-        }
-        
-        // Update state
-        setStudents(studentsData || []);
-        setFacultyAccounts(facultyData || []);
+        setStudents(finalStudents);
+        setFacultyAccounts(finalFaculty);
         
         // Load other data from localStorage
         const [n, e, a, r, no, ac, se] = await Promise.all([
@@ -311,30 +312,13 @@ export default function App() {
         setSettings(se);
         setLoading(false);
         
-        console.log('📊 Final - Students:', studentsData?.length || 0, 'Faculty:', facultyData?.length || 0);
+        console.log('✅ Final - Students:', finalStudents.length, 'Faculty:', finalFaculty.length);
+        console.log('📝 Source:', studentsResult.data?.length > 0 ? 'Supabase' : 'Demo Data');
       } catch (error) {
         console.error('❌ Error loading data:', error);
-        // Fallback to localStorage
-        const [s, n, e, a, r, no, ac, fa, se] = await Promise.all([
-          loadKey(STORAGE_KEYS.students, []),
-          loadKey(STORAGE_KEYS.notes, []),
-          loadKey(STORAGE_KEYS.exams, []),
-          loadKey(STORAGE_KEYS.attendance, {}),
-          loadKey(STORAGE_KEYS.results, []),
-          loadKey(STORAGE_KEYS.notifications, []),
-          loadKey(STORAGE_KEYS.adminCreds, DEFAULT_ADMIN),
-          loadKey(STORAGE_KEYS.facultyAccounts, []),
-          loadKey(STORAGE_KEYS.settings, DEFAULT_SETTINGS),
-        ]);
-        setStudents(s);
-        setNotes(n);
-        setExams(e);
-        setAttendance(a);
-        setResults(r);
-        setNotifications(no);
-        setAdminCreds(ac);
-        setFacultyAccounts(fa);
-        setSettings(se);
+        // Use demo data as fallback
+        setStudents(DEMO_STUDENTS);
+        setFacultyAccounts(DEMO_FACULTY);
         setLoading(false);
       }
     };
@@ -471,6 +455,10 @@ export default function App() {
   );
 }
 
+// Keep your existing Dashboard, StudentsTab, NotesTab, ExamsTab, TakeExamTab, AttendanceTab, ResultsTab, AdminPanel components
+// They work as is - just copy them from your current file
+
+export default App;
 
 /* ---------------------------------- Dashboard ---------------------------------- */
 
