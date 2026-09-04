@@ -259,22 +259,33 @@ export default function App() {
     toastTimer.current = setTimeout(() => setToast(null), 3200);
   }
 
+  // Load from Supabase
   useEffect(() => {
     (async () => {
       try {
+        console.log('🔄 Loading data from Supabase...');
+        
         // Load students from Supabase
         const { data: studentsData, error: studentsError } = await supabase
           .from('students')
           .select('*');
         
-        if (studentsError) console.error('Students error:', studentsError);
+        if (studentsError) {
+          console.error('❌ Students error:', studentsError);
+        } else {
+          console.log('✅ Students loaded:', studentsData?.length || 0);
+        }
         
         // Load faculty from Supabase
         const { data: facultyData, error: facultyError } = await supabase
           .from('faculty_accounts')
           .select('*');
         
-        if (facultyError) console.error('Faculty error:', facultyError);
+        if (facultyError) {
+          console.error('❌ Faculty error:', facultyError);
+        } else {
+          console.log('✅ Faculty loaded:', facultyData?.length || 0);
+        }
         
         // Load other data from localStorage
         const [n, e, a, r, no, ac, se] = await Promise.all([
@@ -297,8 +308,10 @@ export default function App() {
         setAdminCreds(ac); 
         setSettings(se);
         setLoading(false);
+        
+        console.log('📊 Final counts - Students:', studentsData?.length || 0, 'Faculty:', facultyData?.length || 0);
       } catch (error) {
-        console.error('Error loading data:', error);
+        console.error('❌ Error loading data:', error);
         // Fallback to localStorage
         const [s, n, e, a, r, no, ac, fa, se] = await Promise.all([
           loadKey(STORAGE_KEYS.students, []),
@@ -512,33 +525,25 @@ function LoginScreen({ settings, adminCreds, facultyAccounts, students, onLogin,
 
     if (role === "faculty") {
       try {
-        // First check localStorage
-        let faculty = facultyAccounts.find(
-          (f) => f.username.toLowerCase() === trimmedId.toLowerCase() && f.password === trimmedPassword
-        );
+        console.log('🔍 Looking for faculty:', trimmedId);
         
-        if (faculty) {
-          onLogin({ role: "faculty", id: faculty.id, name: faculty.name });
-          showToast(`Welcome ${faculty.name}!`, "success");
-          setIsLoading(false);
-          return;
-        }
-        
-        // If not found, try Supabase
+        // Check Supabase first
         const { data, error } = await supabase
           .from('faculty_accounts')
           .select('*')
           .eq('username', trimmedId.toLowerCase());
         
         if (error) {
-          console.error('Supabase error:', error);
+          console.error('❌ Supabase error:', error);
         }
         
         if (data && data.length > 0) {
-          const f = data[0];
-          if (f.password === trimmedPassword) {
-            onLogin({ role: "faculty", id: f.id, name: f.name });
-            showToast(`Welcome ${f.name}!`, "success");
+          const faculty = data[0];
+          console.log('✅ Faculty found in Supabase:', faculty.name);
+          
+          if (faculty.password === trimmedPassword) {
+            onLogin({ role: "faculty", id: faculty.id, name: faculty.name });
+            showToast(`Welcome ${faculty.name}!`, "success");
             setIsLoading(false);
             return;
           } else {
@@ -548,15 +553,26 @@ function LoginScreen({ settings, adminCreds, facultyAccounts, students, onLogin,
             setIsLoading(false);
             return;
           }
+        }
+        
+        // Fallback to localStorage
+        const acc = facultyAccounts.find(
+          (f) => f.username.toLowerCase() === trimmedId.toLowerCase() && f.password === trimmedPassword
+        );
+        if (acc) {
+          onLogin({ role: "faculty", id: acc.id, name: acc.name });
+          showToast(`Welcome ${acc.name}!`, "success");
+          setIsLoading(false);
+          return;
         } else {
-          setLoginError(`No faculty found with username "${trimmedId}". Check Supabase.`);
+          setLoginError(`No faculty found with username "${trimmedId}".`);
           showToast(`❌ No faculty found.`, "error");
           setPassword('');
           setIsLoading(false);
           return;
         }
       } catch (error) {
-        console.error('Faculty login error:', error);
+        console.error('❌ Faculty login error:', error);
         setLoginError("Error connecting to database.");
         showToast("❌ Database error.", "error");
         setPassword('');
@@ -567,33 +583,24 @@ function LoginScreen({ settings, adminCreds, facultyAccounts, students, onLogin,
 
     // STUDENT LOGIN
     try {
-      // First check localStorage
-      let student = students.find(
-        (st) => st.username.toLowerCase() === trimmedId.toLowerCase() && st.password === trimmedPassword
-      );
+      console.log('🔍 Looking for student:', trimmedId);
       
-      if (student) {
-        onLogin({ role: "student", id: student.id, name: student.name, username: student.username });
-        showToast(`Welcome ${student.name}!`, "success");
-        setIsLoading(false);
-        return;
-      }
-      
-      // If not found, try Supabase
       const { data, error } = await supabase
         .from('students')
         .select('*')
         .eq('username', trimmedId.toLowerCase());
       
       if (error) {
-        console.error('Supabase error:', error);
+        console.error('❌ Supabase error:', error);
       }
       
       if (data && data.length > 0) {
-        const s = data[0];
-        if (s.password === trimmedPassword) {
-          onLogin({ role: "student", id: s.id, name: s.name, username: s.username });
-          showToast(`Welcome ${s.name}!`, "success");
+        const student = data[0];
+        console.log('✅ Student found in Supabase:', student.name);
+        
+        if (student.password === trimmedPassword) {
+          onLogin({ role: "student", id: student.id, name: student.name, username: student.username });
+          showToast(`Welcome ${student.name}!`, "success");
           setIsLoading(false);
           return;
         } else {
@@ -603,6 +610,17 @@ function LoginScreen({ settings, adminCreds, facultyAccounts, students, onLogin,
           setIsLoading(false);
           return;
         }
+      }
+      
+      // Fallback to localStorage
+      const student = students.find(
+        (st) => st.username.toLowerCase() === trimmedId.toLowerCase() && st.password === trimmedPassword
+      );
+      if (student) {
+        onLogin({ role: "student", id: student.id, name: student.name, username: student.username });
+        showToast(`Welcome ${student.name}!`, "success");
+        setIsLoading(false);
+        return;
       } else {
         setLoginError(`No student found with username "${trimmedId}".`);
         showToast(`❌ No student found.`, "error");
@@ -611,7 +629,7 @@ function LoginScreen({ settings, adminCreds, facultyAccounts, students, onLogin,
         return;
       }
     } catch (error) {
-      console.error('Student login error:', error);
+      console.error('❌ Student login error:', error);
       setLoginError("Error connecting to database.");
       showToast("❌ Database error.", "error");
       setPassword('');
@@ -705,7 +723,7 @@ function LoginScreen({ settings, adminCreds, facultyAccounts, students, onLogin,
             Sign in to continue
           </div>
           <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 6, opacity: 0.7 }}>
-            {students.length} students • {facultyAccounts.length} faculty registered
+            {students.length} students • {facultyAccounts.length} faculty
           </div>
         </div>
 
@@ -812,6 +830,8 @@ function LoginScreen({ settings, adminCreds, facultyAccounts, students, onLogin,
     </div>
   );
 }
+
+
 
 /* ---------------------------------- Dashboard ---------------------------------- */
 

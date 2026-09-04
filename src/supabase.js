@@ -1,4 +1,3 @@
-// Replace these with your actual Supabase credentials
 import { createClient } from '@supabase/supabase-js';
 
 
