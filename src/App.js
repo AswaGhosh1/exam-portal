@@ -1476,31 +1476,31 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
   }
 
   async function beginExam() {
-    // In beginExam function
-const fileUrl = examPdfUrls[exam.id] || exam.fileData;
-if (fileUrl) {
-  await extractQuestionsFromFile(fileUrl);
-} else {
-  setPdfError(true);
-  showToast("No file found. Please contact your faculty.", "warning");
-}
-
-    setAnswers({}); 
-    setQIndex(0); 
-    setSecondsLeft(exam.durationMins * 60); 
-    setStarted(true);
-    setPdfError(false);
-    setShowReview(false);
-    
-    const fileUrl = examPdfUrls[exam.id];
-    if (fileUrl) {
-      await extractQuestionsFromFile(fileUrl);
-    } else {
-      setPdfError(true);
-      showToast("No file found. Please contact your faculty.", "warning");
-    }
+  const already = results.find((r) => r.examId === exam.id && r.studentId === currentUser.id);
+  if (already) { 
+    setFinished(already); 
+    setShowReview(true);
+    return; 
   }
-
+  
+  setAnswers({}); 
+  setQIndex(0); 
+  setSecondsLeft(exam.durationMins * 60); 
+  setStarted(true);
+  setPdfError(false);
+  setShowReview(false);
+  
+  // Get the file URL - declare it ONCE
+  const fileUrl = examPdfUrls[exam.id] || exam.fileData;
+  
+  if (fileUrl) {
+    await extractQuestionsFromFile(fileUrl);
+  } else {
+    setPdfError(true);
+    showToast("No file found. Please contact your faculty.", "warning");
+  }
+}
+   
   async function extractQuestionsFromFile(fileUrl) {
     setIsLoadingPdf(true);
     setPdfError(false);
