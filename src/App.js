@@ -1501,65 +1501,71 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
   }
 }
    
-  async function extractQuestionsFromFile(fileUrl) {
-    setIsLoadingPdf(true);
-    setPdfError(false);
+ async function extractQuestionsFromFile(fileUrl) {
+  setIsLoadingPdf(true);
+  setPdfError(false);
+  
+  try {
+    const response = await fetch(fileUrl);
+    const blob = await response.blob();
     
-    try {
-      const response = await fetch(fileUrl);
-      const blob = await response.blob();
-      
-      const fileExtension = fileUrl.split('.').pop().toLowerCase();
-      const isDoc = fileExtension === 'doc' || fileExtension === 'docx' || 
-                     blob.type === 'application/msword' || 
-                     blob.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-      
-      if (isDoc) {
-        setFileType('doc');
-      } else {
-        setFileType('pdf');
-      }
-      
-      let text = '';
-      
-      if (isDoc) {
-        try {
-          const mammoth = await import('mammoth');
-          const arrayBuffer = await blob.arrayBuffer();
-          const result = await mammoth.extractRawText({ arrayBuffer });
-          text = result.value;
-          console.log("DOC text extracted, length:", text.length);
-        } catch (e) {
-          console.error("Mammoth extraction failed:", e);
-          const arrayBuffer = await blob.arrayBuffer();
-          text = await extractTextFromBuffer(arrayBuffer);
-        }
-      } else {
+    const fileExtension = fileUrl.split('.').pop().toLowerCase();
+    const isDoc = fileExtension === 'doc' || fileExtension === 'docx' || 
+                   blob.type === 'application/msword' || 
+                   blob.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    
+    let text = '';
+    
+    if (isDoc) {
+      try {
+        // Use mammoth for DOC/DOCX files
+        const mammoth = await import('mammoth');
+        const arrayBuffer = await blob.arrayBuffer();
+        const result = await mammoth.extractRawText({ arrayBuffer });
+        text = result.value;
+        console.log("📝 DOC text extracted, length:", text.length);
+        console.log("📝 DOC sample:", text.substring(0, 500));
+      } catch (e) {
+        console.error("Mammoth extraction failed:", e);
+        // Fallback: try to read as text
         const arrayBuffer = await blob.arrayBuffer();
         text = await extractTextFromBuffer(arrayBuffer);
       }
-      
-      if (text && text.trim().length > 10) {
-        const questions = parseQuestionsImproved(text, exam.totalQuestions);
-        setPdfQuestions(questions);
-        if (questions.length > 0) {
-          showToast(`✅ Extracted ${questions.length} questions from the file`, "success");
-        } else {
-          showToast("⚠️ Could not find questions. Please read from the viewer.", "warning");
-          setPdfError(true);
-        }
+    } else {
+      // For PDF, try to extract text
+      const arrayBuffer = await blob.arrayBuffer();
+      text = await extractTextFromBuffer(arrayBuffer);
+    }
+    
+    // Clean the text - remove special characters
+    text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    text = text.replace(/\n{3,}/g, '\n\n');
+    text = text.replace(/[^\x20-\x7E\n\r\t]/g, ' ');
+    
+    console.log("📝 Cleaned text length:", text.length);
+    console.log("📝 Cleaned sample:", text.substring(0, 500));
+    
+    if (text && text.trim().length > 50) {
+      const questions = parseQuestionsImproved(text, exam.totalQuestions);
+      setPdfQuestions(questions);
+      if (questions.length > 0) {
+        showToast(`✅ Extracted ${questions.length} questions from the file`, "success");
       } else {
-        showToast("⚠️ Could not extract text. Please read from the viewer.", "warning");
+        showToast("⚠️ Could not find questions in the document. Please check the format.", "warning");
         setPdfError(true);
       }
-    } catch (error) {
-      console.error("Error extracting text:", error);
-      showToast("❌ Could not extract questions. Please read from the viewer.", "error");
+    } else {
+      showToast("⚠️ Could not extract text. Please read from the viewer.", "warning");
       setPdfError(true);
-    } finally {
-      setIsLoadingPdf(false);
     }
+  } catch (error) {
+    console.error("❌ Error extracting text:", error);
+    showToast("❌ Could not extract questions. Please read from the viewer.", "error");
+    setPdfError(true);
+  } finally {
+    setIsLoadingPdf(false);
   }
+}
 
   async function extractTextFromBuffer(buffer) {
   try {
