@@ -5,9 +5,9 @@ const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYm
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
-// Test connection immediately
+// Test connection
 supabase.from('faculty_accounts').select('*').then(res => {
-  console.log('🔗 Supabase connection test - Faculty count:', res.data?.length || 0);
+  console.log('🔗 Supabase connected! Faculty count:', res.data?.length || 0);
 }).catch(err => {
   console.error('❌ Supabase connection failed:', err);
 });
