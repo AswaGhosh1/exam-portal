@@ -1060,7 +1060,6 @@ function NotesTab({ notes, setNotes, currentUser, showToast }) {
 }
 
 
-
 /* ---------------------------------- Exams ---------------------------------- */
 
 function ExamsTab({ exams, setExams, students, notifications, setNotifications, examPdfUrls, setExamPdf, showToast }) {
@@ -1074,6 +1073,7 @@ function ExamsTab({ exams, setExams, students, notifications, setNotifications, 
   const [answerKey, setAnswerKey] = useState(Array(10).fill(0));
   const [file, setFile] = useState(null);
   const [fileType, setFileType] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
 
   function changeTotalQuestions(val) {
     const n = Math.max(1, Math.min(200, Number(val) || 1));
@@ -1108,6 +1108,8 @@ function ExamsTab({ exams, setExams, students, notifications, setNotifications, 
       return;
     }
     
+    setIsSaving(true);
+    
     const scheduledAt = new Date(`${date}T${time}`).toISOString();
     const id = uid();
     const fileBase64 = await fileToBase64(file);
@@ -1128,30 +1130,62 @@ function ExamsTab({ exams, setExams, students, notifications, setNotifications, 
       fileData: fileBase64
     };
     
-    const blob = new Blob([file], { type: file.type || 'application/octet-stream' });
-    const blobUrl = URL.createObjectURL(blob);
-    setExamPdf(id, blobUrl);
-    
-    const updatedExams = [...exams, rec];
-    setExams(updatedExams);
-    await saveKey(STORAGE_KEYS.exams, updatedExams);
-    
-    resetForm();
-    showToast(`"${rec.title}" scheduled with ${file.name}. Link code: ${rec.code}`);
+    try {
+      // Save to Supabase
+      const { data, error } = await supabase
+        .from('exams')
+        .insert([rec])
+        .select();
+      
+      if (error) throw error;
+      
+      // Create blob URL for viewing
+      const blob = new Blob([file], { type: file.type || 'application/octet-stream' });
+      const blobUrl = URL.createObjectURL(blob);
+      setExamPdf(id, blobUrl);
+      
+      // Update local state with Supabase data
+      const updatedExams = [...exams, rec];
+      setExams(updatedExams);
+      await saveKey(STORAGE_KEYS.exams, updatedExams);
+      
+      resetForm();
+      showToast(`"${rec.title}" scheduled with ${file.name}. Link code: ${rec.code}`);
+    } catch (error) {
+      console.error('Error saving exam:', error);
+      showToast('Failed to save exam to database. Please try again.', 'error');
+    } finally {
+      setIsSaving(false);
+    }
   }
 
-  function removeExam(id) { 
-    const updated = exams.filter((e) => e.id !== id);
-    setExams(updated);
-    saveKey(STORAGE_KEYS.exams, updated);
-    showToast("Exam removed.");
+  async function removeExam(id) { 
+    try {
+      // Delete from Supabase
+      const { error } = await supabase
+        .from('exams')
+        .delete()
+        .eq('id', id);
+      
+      if (error) throw error;
+      
+      // Update local state
+      const updated = exams.filter((e) => e.id !== id);
+      setExams(updated);
+      saveKey(STORAGE_KEYS.exams, updated);
+      showToast("Exam removed.");
+    } catch (error) {
+      console.error('Error removing exam:', error);
+      showToast('Failed to remove exam.', 'error');
+    }
   }
 
-  function notifyStudents(exam) {
+  async function notifyStudents(exam) {
     if (students.length === 0) { 
       showToast("Add students first — there's no one to notify yet.", "error"); 
       return; 
     }
+    
     const link = `https://your-school-domain.com/exam/${exam.code}`;
     const entries = students.map((s) => ({ 
       id: uid(), 
@@ -1163,13 +1197,29 @@ function ExamsTab({ exams, setExams, students, notifications, setNotifications, 
       link, 
       sentAt: new Date().toISOString() 
     }));
-    const updated = [...notifications, ...entries];
-    setNotifications(updated);
-    saveKey(STORAGE_KEYS.notifications, updated);
-    const updatedExams = exams.map((e) => (e.id === exam.id ? { ...e, notified: true } : e));
-    setExams(updatedExams);
-    saveKey(STORAGE_KEYS.exams, updatedExams);
-    showToast(`Simulated email + SMS sent to ${students.length} student(s).`);
+    
+    try {
+      // Update exam notification status in Supabase
+      const { error } = await supabase
+        .from('exams')
+        .update({ notified: true })
+        .eq('id', exam.id);
+      
+      if (error) throw error;
+      
+      const updated = [...notifications, ...entries];
+      setNotifications(updated);
+      saveKey(STORAGE_KEYS.notifications, updated);
+      
+      const updatedExams = exams.map((e) => (e.id === exam.id ? { ...e, notified: true } : e));
+      setExams(updatedExams);
+      saveKey(STORAGE_KEYS.exams, updatedExams);
+      
+      showToast(`Simulated email + SMS sent to ${students.length} student(s).`);
+    } catch (error) {
+      console.error('Error notifying students:', error);
+      showToast('Failed to notify students.', 'error');
+    }
   }
 
   function copyLink(exam) {
@@ -1279,8 +1329,8 @@ function ExamsTab({ exams, setExams, students, notifications, setNotifications, 
 
           <div className="divider" />
           <div style={{ display: "flex", gap: 10 }}>
-            <button className="btn btn-primary" onClick={saveExam}>
-              <CheckCircle2 size={15} /> Save &amp; schedule exam
+            <button className="btn btn-primary" onClick={saveExam} disabled={isSaving}>
+              <CheckCircle2 size={15} /> {isSaving ? "Saving..." : "Save & schedule exam"}
             </button>
             <button className="btn btn-outline" onClick={resetForm}>Cancel</button>
           </div>
