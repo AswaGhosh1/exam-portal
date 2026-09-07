@@ -1489,22 +1489,31 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
     setStarted(true);
     setPdfError(false);
     setShowReview(false);
-    setPdfQuestions([]); // Clear previous questions
     
+    // Generate questions from exam data
+    const questions = [];
+    for (let i = 0; i < exam.totalQuestions; i++) {
+      questions.push({
+        id: i,
+        text: `Question ${i + 1}`,
+        options: ['A', 'B', 'C', 'D']
+      });
+    }
+    setPdfQuestions(questions);
+    
+    // Try to extract from file if available (optional)
     const fileUrl = examPdfUrls[exam.id] || exam.fileData;
-    
     if (fileUrl) {
-      await extractQuestionsFromFile(fileUrl);
-    } else {
-      setPdfError(true);
-      showToast("No file found. Please contact your faculty.", "warning");
+      try {
+        await extractQuestionsFromFile(fileUrl);
+      } catch (e) {
+        console.log("File extraction failed, using default questions");
+      }
     }
   }
 
   async function extractQuestionsFromFile(fileUrl) {
     setIsLoadingPdf(true);
-    setPdfError(false);
-    setPdfQuestions([]); // Reset questions
     
     try {
       const response = await fetch(fileUrl);
@@ -1519,54 +1528,28 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
       
       if (isDoc) {
         try {
-          // Try mammoth for DOC/DOCX
           const mammoth = await import('mammoth');
           const arrayBuffer = await blob.arrayBuffer();
           const result = await mammoth.extractRawText({ arrayBuffer });
           text = result.value || '';
-          console.log("📝 DOC extracted, length:", text.length);
         } catch (e) {
-          console.log("Mammoth failed, trying fallback");
-          // Fallback: read as text
-          const arrayBuffer = await blob.arrayBuffer();
-          const decoder = new TextDecoder('utf-8');
-          text = decoder.decode(arrayBuffer);
+          console.log("Mammoth failed");
         }
       } else {
-        // Handle PDF
         const arrayBuffer = await blob.arrayBuffer();
         const decoder = new TextDecoder('utf-8');
         text = decoder.decode(arrayBuffer);
       }
       
-      // Clean the text
-      if (text) {
-        text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-        text = text.replace(/\n{3,}/g, '\n\n');
-        text = text.replace(/[^\x20-\x7E\n\r\t]/g, ' ');
-      }
-      
-      console.log("📝 Cleaned text length:", text?.length || 0);
-      console.log("📝 Sample:", text?.substring(0, 300) || 'empty');
-      
-      // Check if we have valid text
       if (text && text.trim().length > 10) {
-        const questions = parseQuestionsImproved(text, exam.totalQuestions);
-        setPdfQuestions(questions);
-        if (questions.length > 0) {
-          showToast(`✅ Extracted ${questions.length} questions from the file`, "success");
-        } else {
-          showToast("⚠️ Could not find questions. Please read from the viewer.", "warning");
-          setPdfError(true);
+        const parsedQuestions = parseQuestionsImproved(text, exam.totalQuestions);
+        if (parsedQuestions.length > 0) {
+          setPdfQuestions(parsedQuestions);
+          showToast(`✅ Extracted ${parsedQuestions.length} questions`, "success");
         }
-      } else {
-        showToast("📄 Could not extract text. Please read from the viewer.", "info");
-        setPdfError(true);
       }
     } catch (error) {
-      console.error("❌ Error extracting text:", error);
-      showToast("❌ Could not extract questions. Please read from the viewer.", "error");
-      setPdfError(true);
+      console.log("Text extraction failed, using default questions");
     } finally {
       setIsLoadingPdf(false);
     }
@@ -1574,13 +1557,10 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
 
   function parseQuestionsImproved(text, totalQuestions) {
     const questions = [];
-    
-    // Clean the text
     let cleanText = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
     cleanText = cleanText.replace(/\n{3,}/g, '\n\n');
     
     const lines = cleanText.split('\n');
-    
     let currentQuestion = null;
     let currentOptions = [];
     
@@ -1588,21 +1568,17 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
       /^(\d+)[\.\)]\s*(.+)/,
       /^Q(\d+)[\.\)]\s*(.+)/i,
       /^Question\s*(\d+)[\.\)]\s*(.+)/i,
-      /^(\d+)\s+([A-Z][a-z].+)/,
     ];
     
     const optionPatterns = [
       /^([A-D])[\.\)]\s*(.+)/,
       /^([a-d])[\.\)]\s*(.+)/,
       /^\(([A-D])\)\s*(.+)/,
-      /^([A-D])\s+([A-Z].+)/,
     ];
     
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i].trim();
       if (!line) continue;
-      
-      // Skip separator lines
       if (/^[\-\=\_\.\s\|\:\;]+$/.test(line)) continue;
       
       let isQuestion = false;
@@ -1625,7 +1601,6 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
             options: currentOptions.slice(0, 4)
           });
         }
-        
         currentQuestion = (questionMatch[2] || questionMatch[1] || line).trim();
         currentOptions = [];
       } else {
@@ -1661,21 +1636,18 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
       });
     }
     
-    // If no questions found, create placeholder questions
+    // If no questions found, create default questions
     if (questions.length === 0) {
       for (let i = 0; i < Math.min(totalQuestions, 100); i++) {
         questions.push({
           id: i,
-          text: `Question ${i + 1} (Read from document viewer)`,
+          text: `Question ${i + 1}`,
           options: ['A', 'B', 'C', 'D']
         });
       }
-      showToast("📄 Please read questions from the document viewer below.", "warning");
     }
     
-    const result = questions.slice(0, totalQuestions);
-    console.log(`📊 Parsed ${result.length} questions`);
-    return result;
+    return questions.slice(0, totalQuestions);
   }
 
   function selectAnswer(oi) { 
@@ -1739,7 +1711,7 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
     setReviewIndex(0);
   }
 
-  // Review mode - show correct/wrong answers
+  // Review mode
   if (showReview && finished) {
     const pct = Math.round((finished.score / finished.total) * 100);
     const questions = pdfQuestions.length > 0 ? pdfQuestions : 
@@ -1936,7 +1908,7 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
     const questions = pdfQuestions.length > 0 ? pdfQuestions : 
       Array.from({ length: exam.totalQuestions }, (_, i) => ({
         id: i,
-        text: `Question ${i + 1} (Read from PDF)`,
+        text: `Question ${i + 1}`,
         options: ['A', 'B', 'C', 'D']
       }));
 
@@ -1963,7 +1935,7 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
           ))}
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr", gap: 16, marginBottom: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: pdfUrl ? "1.6fr 1fr" : "1fr", gap: 16, marginBottom: 16 }}>
           {pdfUrl ? (
             <div className="card" style={{ overflow: "hidden" }}>
               <div style={{ marginBottom: 10, fontWeight: 600, color: "var(--muted)", fontSize: 12, display: "flex", justifyContent: "space-between" }}>
@@ -1978,12 +1950,12 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
               />
               {pdfQuestions.length > 0 && (
                 <div style={{ marginTop: 10, fontSize: 12, color: "var(--success)" }}>
-                  ✅ {pdfQuestions.length} questions extracted. Select your answer below.
+                  ✅ {pdfQuestions.length} questions. Select your answer below.
                 </div>
               )}
               {pdfError && (
                 <div style={{ marginTop: 10, fontSize: 12, color: "var(--danger)" }}>
-                  ⚠️ Could not extract questions. Please read from the document viewer.
+                  ⚠️ Could not extract questions. Read from document viewer.
                 </div>
               )}
             </div>
