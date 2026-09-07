@@ -455,10 +455,6 @@ export default function App() {
   );
 }
 
-// Keep your existing Dashboard, StudentsTab, NotesTab, ExamsTab, TakeExamTab, AttendanceTab, ResultsTab, AdminPanel components
-// They work as is - just copy them from your current file
-
-export default App;
 
 /* ---------------------------------- Dashboard ---------------------------------- */
 
