@@ -1452,6 +1452,7 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
   const [fileType, setFileType] = useState("pdf");
   const [showReview, setShowReview] = useState(false);
   const [reviewIndex, setReviewIndex] = useState(0);
+  const [showPdfViewer, setShowPdfViewer] = useState(false);
 
   useEffect(() => {
     if (!started || finished) return;
@@ -1489,30 +1490,31 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
     setStarted(true);
     setPdfError(false);
     setShowReview(false);
+    setShowPdfViewer(false);
     
-    // Generate questions from exam data
-    const questions = [];
+    // Create default questions
+    const defaultQuestions = [];
     for (let i = 0; i < exam.totalQuestions; i++) {
-      questions.push({
+      defaultQuestions.push({
         id: i,
         text: `Question ${i + 1}`,
         options: ['A', 'B', 'C', 'D']
       });
     }
-    setPdfQuestions(questions);
+    setPdfQuestions(defaultQuestions);
     
-    // Try to extract from file if available (optional)
+    // Try to extract from file if available
     const fileUrl = examPdfUrls[exam.id] || exam.fileData;
     if (fileUrl) {
       try {
-        await extractQuestionsFromFile(fileUrl);
+        await extractQuestionsFromFile(fileUrl, defaultQuestions);
       } catch (e) {
         console.log("File extraction failed, using default questions");
       }
     }
   }
 
-  async function extractQuestionsFromFile(fileUrl) {
+  async function extractQuestionsFromFile(fileUrl, defaultQuestions) {
     setIsLoadingPdf(true);
     
     try {
@@ -1546,10 +1548,16 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
         if (parsedQuestions.length > 0) {
           setPdfQuestions(parsedQuestions);
           showToast(`✅ Extracted ${parsedQuestions.length} questions`, "success");
+          return;
         }
       }
+      
+      // If extraction failed, use default questions
+      setPdfQuestions(defaultQuestions);
+      showToast("📄 Using default question numbers. Read from PDF viewer.", "info");
     } catch (error) {
       console.log("Text extraction failed, using default questions");
+      setPdfQuestions(defaultQuestions);
     } finally {
       setIsLoadingPdf(false);
     }
@@ -1636,7 +1644,6 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
       });
     }
     
-    // If no questions found, create default questions
     if (questions.length === 0) {
       for (let i = 0; i < Math.min(totalQuestions, 100); i++) {
         questions.push({
@@ -1709,6 +1716,7 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
     setPdfError(false);
     setShowReview(false);
     setReviewIndex(0);
+    setShowPdfViewer(false);
   }
 
   // Review mode
@@ -1929,90 +1937,91 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
           <div className={`timer-badge ${low ? "low" : ""}`}><Timer size={16} /> {pad(mm)}:{pad(ss)}</div>
         </div>
 
+        {/* Question Progress Dots */}
         <div className="q-progress">
           {Array.from({ length: exam.totalQuestions }).map((_, i) => (
             <div key={i} className={`q-dot ${i === qIndex ? "current" : answers[i] !== undefined ? "answered" : ""}`} onClick={() => setQIndex(i)}>{i + 1}</div>
           ))}
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: pdfUrl ? "1.6fr 1fr" : "1fr", gap: 16, marginBottom: 16 }}>
-          {pdfUrl ? (
-            <div className="card" style={{ overflow: "hidden" }}>
-              <div style={{ marginBottom: 10, fontWeight: 600, color: "var(--muted)", fontSize: 12, display: "flex", justifyContent: "space-between" }}>
-                <span>📄 Question Paper</span>
-                {isLoadingPdf && <span style={{ color: "var(--accent)" }}>Extracting questions...</span>}
+        {/* PDF Viewer (Small, at the top - optional) */}
+        {pdfUrl && (
+          <div style={{ marginBottom: 16 }}>
+            <button 
+              className="btn btn-outline btn-sm" 
+              onClick={() => setShowPdfViewer(!showPdfViewer)}
+              style={{ marginBottom: 8 }}
+            >
+              {showPdfViewer ? '📄 Hide PDF Viewer' : '📄 Show PDF Viewer'}
+            </button>
+            {showPdfViewer && (
+              <div className="card" style={{ overflow: "hidden", maxHeight: 200 }}>
+                <iframe 
+                  title="question-paper" 
+                  src={`${pdfUrl}#page=${qIndex + 1}&toolbar=0&navpanes=0`} 
+                  className="pdf-frame" 
+                  style={{ height: 150 }}
+                />
               </div>
-              <iframe 
-                title="question-paper" 
-                src={`${pdfUrl}#page=${qIndex + 1}&toolbar=0&navpanes=0`} 
-                className="pdf-frame" 
-                style={{ height: 400 }}
-              />
-              {pdfQuestions.length > 0 && (
-                <div style={{ marginTop: 10, fontSize: 12, color: "var(--success)" }}>
-                  ✅ {pdfQuestions.length} questions. Select your answer below.
-                </div>
-              )}
-              {pdfError && (
-                <div style={{ marginTop: 10, fontSize: 12, color: "var(--danger)" }}>
-                  ⚠️ Could not extract questions. Read from document viewer.
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="card" style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: 200 }}>
-              <div className="empty" style={{ padding: 0 }}>
-                <AlertTriangle size={26} />
-                <div>The question paper isn't available. Read question {qIndex + 1} from your copy and select your answer.</div>
-              </div>
-            </div>
-          )}
-          <div className="card">
-            <div style={{ fontWeight: 600, marginBottom: 12 }}>
-              Question {qIndex + 1}
-              {answers[qIndex] !== undefined && (
-                <span style={{ marginLeft: 8, fontSize: 14, color: "var(--success)" }}>
-                  ✓ Answered
-                </span>
-              )}
-            </div>
-            
-            <div style={{ 
-              marginBottom: 16, 
-              padding: 12, 
-              background: "var(--paper)", 
-              borderRadius: 8,
-              fontSize: 14,
-              lineHeight: 1.6
-            }}>
-              {currentQuestion.text || `Question ${qIndex + 1}`}
-            </div>
-            
-            <div style={{ fontWeight: 600, marginBottom: 8, fontSize: 13, color: "var(--muted)" }}>Select your answer:</div>
-            {currentQuestion.options && currentQuestion.options.length > 0 ? (
-              currentQuestion.options.map((option, oi) => {
-                const letter = LETTERS[oi] || String.fromCharCode(65 + oi);
-                return (
-                  <div key={oi} className={`option-row ${answers[qIndex] === oi ? "selected" : ""}`} onClick={() => selectAnswer(oi)} style={{ padding: "14px 16px" }}>
-                    <div className="option-letter" style={{ width: 30, height: 30, fontSize: 14 }}>{letter}</div>
-                    <div style={{ fontSize: 15, flex: 1 }}>{option}</div>
-                    {answers[qIndex] === oi && <Check size={20} color="var(--success)" style={{ marginLeft: "auto" }} />}
-                  </div>
-                );
-              })
-            ) : (
-              LETTERS.map((l, oi) => (
+            )}
+          </div>
+        )}
+
+        {/* Question as Text - This is what you wanted */}
+        <div className="card" style={{ maxWidth: 800, margin: "0 auto" }}>
+          <div style={{ fontWeight: 600, marginBottom: 12, fontSize: 18 }}>
+            Question {qIndex + 1}
+            {answers[qIndex] !== undefined && (
+              <span style={{ marginLeft: 8, fontSize: 14, color: "var(--success)" }}>
+                ✓ Answered
+              </span>
+            )}
+          </div>
+          
+          {/* Question Text */}
+          <div style={{ 
+            marginBottom: 20, 
+            padding: 16, 
+            background: "var(--paper)", 
+            borderRadius: 8,
+            fontSize: 16,
+            lineHeight: 1.8
+          }}>
+            {currentQuestion.text || `Question ${qIndex + 1}`}
+          </div>
+          
+          {/* Options */}
+          <div style={{ fontWeight: 600, marginBottom: 12, fontSize: 14, color: "var(--muted)" }}>Select your answer:</div>
+          {currentQuestion.options && currentQuestion.options.length > 0 ? (
+            currentQuestion.options.map((option, oi) => {
+              const letter = LETTERS[oi] || String.fromCharCode(65 + oi);
+              return (
                 <div key={oi} className={`option-row ${answers[qIndex] === oi ? "selected" : ""}`} onClick={() => selectAnswer(oi)} style={{ padding: "14px 16px" }}>
-                  <div className="option-letter" style={{ width: 30, height: 30, fontSize: 14 }}>{l}</div>
-                  <div style={{ fontSize: 15, flex: 1 }}>Option {l}</div>
+                  <div className="option-letter" style={{ width: 30, height: 30, fontSize: 14 }}>{letter}</div>
+                  <div style={{ fontSize: 15, flex: 1 }}>{option}</div>
                   {answers[qIndex] === oi && <Check size={20} color="var(--success)" style={{ marginLeft: "auto" }} />}
                 </div>
-              ))
-            )}
+              );
+            })
+          ) : (
+            LETTERS.map((l, oi) => (
+              <div key={oi} className={`option-row ${answers[qIndex] === oi ? "selected" : ""}`} onClick={() => selectAnswer(oi)} style={{ padding: "14px 16px" }}>
+                <div className="option-letter" style={{ width: 30, height: 30, fontSize: 14 }}>{l}</div>
+                <div style={{ fontSize: 15, flex: 1 }}>Option {l}</div>
+                {answers[qIndex] === oi && <Check size={20} color="var(--success)" style={{ marginLeft: "auto" }} />}
+              </div>
+            ))
+          )}
+
+          {/* Question counter */}
+          <div style={{ marginTop: 16, fontSize: 12, color: "var(--muted)", textAlign: "center" }}>
+            {qIndex + 1} of {exam.totalQuestions} questions
+            {pdfQuestions.length > 0 && ` • ${pdfQuestions.length} questions loaded`}
           </div>
         </div>
 
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        {/* Navigation Buttons */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 16 }}>
           <div style={{ display: "flex", gap: 8 }}>
             <button className="btn btn-outline" disabled={qIndex === 0} onClick={() => setQIndex(qIndex - 1)}>
               <ChevronLeft size={15} /> Previous
@@ -2038,6 +2047,7 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
           </div>
         </div>
 
+        {/* Confirmation Dialog */}
         {showConfirmFinish && (
           <div style={{
             position: "fixed",
