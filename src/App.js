@@ -1476,137 +1476,106 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
   }
 
   async function beginExam() {
-  const already = results.find((r) => r.examId === exam.id && r.studentId === currentUser.id);
-  if (already) { 
-    setFinished(already); 
-    setShowReview(true);
-    return; 
-  }
-  
-  setAnswers({}); 
-  setQIndex(0); 
-  setSecondsLeft(exam.durationMins * 60); 
-  setStarted(true);
-  setPdfError(false);
-  setShowReview(false);
-  
-  // Get the file URL - declare it ONCE
-  const fileUrl = examPdfUrls[exam.id] || exam.fileData;
-  
-  if (fileUrl) {
-    await extractQuestionsFromFile(fileUrl);
-  } else {
-    setPdfError(true);
-    showToast("No file found. Please contact your faculty.", "warning");
-  }
-}
-   
- async function extractQuestionsFromFile(fileUrl) {
-  setIsLoadingPdf(true);
-  setPdfError(false);
-  
-  try {
-    const response = await fetch(fileUrl);
-    const blob = await response.blob();
-    
-    const fileExtension = fileUrl.split('.').pop().toLowerCase();
-    const isDoc = fileExtension === 'doc' || fileExtension === 'docx' || 
-                   blob.type === 'application/msword' || 
-                   blob.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-    
-    let text = '';
-    
-    if (isDoc) {
-      try {
-        // Use mammoth for DOC/DOCX files
-        const mammoth = await import('mammoth');
-        const arrayBuffer = await blob.arrayBuffer();
-        const result = await mammoth.extractRawText({ arrayBuffer });
-        text = result.value;
-        console.log("📝 DOC text extracted, length:", text.length);
-        console.log("📝 DOC sample:", text.substring(0, 500));
-      } catch (e) {
-        console.error("Mammoth extraction failed:", e);
-        // Fallback: try to read as text
-        const arrayBuffer = await blob.arrayBuffer();
-        text = await extractTextFromBuffer(arrayBuffer);
-      }
-    } else {
-      // For PDF, try to extract text
-      const arrayBuffer = await blob.arrayBuffer();
-      text = await extractTextFromBuffer(arrayBuffer);
+    const already = results.find((r) => r.examId === exam.id && r.studentId === currentUser.id);
+    if (already) { 
+      setFinished(already); 
+      setShowReview(true);
+      return; 
     }
     
-    // Clean the text - remove special characters
-    text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-    text = text.replace(/\n{3,}/g, '\n\n');
-    text = text.replace(/[^\x20-\x7E\n\r\t]/g, ' ');
+    setAnswers({}); 
+    setQIndex(0); 
+    setSecondsLeft(exam.durationMins * 60); 
+    setStarted(true);
+    setPdfError(false);
+    setShowReview(false);
+    setPdfQuestions([]); // Clear previous questions
     
-    console.log("📝 Cleaned text length:", text.length);
-    console.log("📝 Cleaned sample:", text.substring(0, 500));
+    const fileUrl = examPdfUrls[exam.id] || exam.fileData;
     
-    if (text && text.trim().length > 50) {
-      const questions = parseQuestionsImproved(text, exam.totalQuestions);
-      setPdfQuestions(questions);
-      if (questions.length > 0) {
-        showToast(`✅ Extracted ${questions.length} questions from the file`, "success");
+    if (fileUrl) {
+      await extractQuestionsFromFile(fileUrl);
+    } else {
+      setPdfError(true);
+      showToast("No file found. Please contact your faculty.", "warning");
+    }
+  }
+
+  async function extractQuestionsFromFile(fileUrl) {
+    setIsLoadingPdf(true);
+    setPdfError(false);
+    setPdfQuestions([]); // Reset questions
+    
+    try {
+      const response = await fetch(fileUrl);
+      const blob = await response.blob();
+      
+      const fileExtension = fileUrl.split('.').pop().toLowerCase();
+      const isDoc = fileExtension === 'doc' || fileExtension === 'docx' || 
+                     blob.type === 'application/msword' || 
+                     blob.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+      
+      let text = '';
+      
+      if (isDoc) {
+        try {
+          // Try mammoth for DOC/DOCX
+          const mammoth = await import('mammoth');
+          const arrayBuffer = await blob.arrayBuffer();
+          const result = await mammoth.extractRawText({ arrayBuffer });
+          text = result.value || '';
+          console.log("📝 DOC extracted, length:", text.length);
+        } catch (e) {
+          console.log("Mammoth failed, trying fallback");
+          // Fallback: read as text
+          const arrayBuffer = await blob.arrayBuffer();
+          const decoder = new TextDecoder('utf-8');
+          text = decoder.decode(arrayBuffer);
+        }
       } else {
-        showToast("⚠️ Could not find questions in the document. Please check the format.", "warning");
+        // Handle PDF
+        const arrayBuffer = await blob.arrayBuffer();
+        const decoder = new TextDecoder('utf-8');
+        text = decoder.decode(arrayBuffer);
+      }
+      
+      // Clean the text
+      if (text) {
+        text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        text = text.replace(/\n{3,}/g, '\n\n');
+        text = text.replace(/[^\x20-\x7E\n\r\t]/g, ' ');
+      }
+      
+      console.log("📝 Cleaned text length:", text?.length || 0);
+      console.log("📝 Sample:", text?.substring(0, 300) || 'empty');
+      
+      // Check if we have valid text
+      if (text && text.trim().length > 10) {
+        const questions = parseQuestionsImproved(text, exam.totalQuestions);
+        setPdfQuestions(questions);
+        if (questions.length > 0) {
+          showToast(`✅ Extracted ${questions.length} questions from the file`, "success");
+        } else {
+          showToast("⚠️ Could not find questions. Please read from the viewer.", "warning");
+          setPdfError(true);
+        }
+      } else {
+        showToast("📄 Could not extract text. Please read from the viewer.", "info");
         setPdfError(true);
       }
-    } else {
-      showToast("⚠️ Could not extract text. Please read from the viewer.", "warning");
+    } catch (error) {
+      console.error("❌ Error extracting text:", error);
+      showToast("❌ Could not extract questions. Please read from the viewer.", "error");
       setPdfError(true);
+    } finally {
+      setIsLoadingPdf(false);
     }
-  } catch (error) {
-    console.error("❌ Error extracting text:", error);
-    showToast("❌ Could not extract questions. Please read from the viewer.", "error");
-    setPdfError(true);
-  } finally {
-    setIsLoadingPdf(false);
   }
-}
-
-  async function extractTextFromBuffer(buffer) {
-  try {
-    // Try UTF-8 decoding first
-    const decoder = new TextDecoder('utf-8');
-    let text = decoder.decode(buffer);
-    
-    // If text contains too many special characters, try different encoding
-    if (text.replace(/[^\x20-\x7E\n\r\t]/g, '').length < text.length * 0.5) {
-      // Try Latin-1 (ISO-8859-1) which handles more characters
-      const decoderLatin = new TextDecoder('latin1');
-      text = decoderLatin.decode(buffer);
-    }
-    
-    // Clean the text
-    text = text.replace(/\x00/g, ''); // Remove null bytes
-    text = text.replace(/[\x01-\x08\x0B\x0C\x0E-\x1F]/g, ' '); // Remove control characters
-    text = text.replace(/\s+/g, ' '); // Normalize whitespace
-    
-    // Keep only readable characters
-    text = text.replace(/[^\x20-\x7E\n\r\t]/g, ' ');
-    
-    // Remove repeated special characters
-    text = text.replace(/([^a-zA-Z0-9\s]){3,}/g, '');
-    
-    // Clean up multiple spaces
-    text = text.replace(/\s{3,}/g, '  ');
-    
-    console.log("📝 Extracted text length:", text.length);
-    console.log("📝 Sample:", text.substring(0, 300));
-    
-    return text;
-  } catch (e) {
-    console.error("Text extraction failed:", e);
-    return '';
-  }
-}
 
   function parseQuestionsImproved(text, totalQuestions) {
     const questions = [];
     
+    // Clean the text
     let cleanText = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
     cleanText = cleanText.replace(/\n{3,}/g, '\n\n');
     
@@ -1633,6 +1602,9 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
       const line = lines[i].trim();
       if (!line) continue;
       
+      // Skip separator lines
+      if (/^[\-\=\_\.\s\|\:\;]+$/.test(line)) continue;
+      
       let isQuestion = false;
       let questionMatch = null;
       
@@ -1654,7 +1626,7 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
           });
         }
         
-        currentQuestion = questionMatch[2] || questionMatch[1] || line;
+        currentQuestion = (questionMatch[2] || questionMatch[1] || line).trim();
         currentOptions = [];
       } else {
         let isOption = false;
@@ -1670,8 +1642,8 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
         }
         
         if (isOption && optionMatch && currentQuestion) {
-          const optionText = optionMatch[2] || optionMatch[1] || line;
-          currentOptions.push(optionText.trim());
+          const optionText = (optionMatch[2] || optionMatch[1] || line).trim();
+          currentOptions.push(optionText);
         } else if (currentQuestion && currentOptions.length > 0) {
           const lastIndex = currentOptions.length - 1;
           currentOptions[lastIndex] = currentOptions[lastIndex] + ' ' + line;
@@ -1689,49 +1661,20 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
       });
     }
     
-    if (questions.length === 0) {
-      const blocks = cleanText.split(/\n(?=\d+[\.\)]\s+)/);
-      
-      for (const block of blocks) {
-        const lines2 = block.split('\n');
-        let qText = '';
-        let opts = [];
-        
-        for (const line of lines2) {
-          const trimmed = line.trim();
-          if (!trimmed) continue;
-          
-          const optMatch = trimmed.match(/^([A-D])[\.\)]\s*(.+)/);
-          if (optMatch) {
-            opts.push(optMatch[2].trim());
-          } else if (opts.length === 0) {
-            qText += trimmed + ' ';
-          }
-        }
-        
-        if (qText.trim() && opts.length > 0) {
-          questions.push({
-            id: questions.length,
-            text: qText.trim(),
-            options: opts.slice(0, 4)
-          });
-        }
-      }
-    }
-    
+    // If no questions found, create placeholder questions
     if (questions.length === 0) {
       for (let i = 0; i < Math.min(totalQuestions, 100); i++) {
         questions.push({
           id: i,
-          text: `Question ${i + 1}`,
+          text: `Question ${i + 1} (Read from document viewer)`,
           options: ['A', 'B', 'C', 'D']
         });
       }
-      showToast("⚠️ Could not parse questions from the document. Using placeholders.", "warning");
+      showToast("📄 Please read questions from the document viewer below.", "warning");
     }
     
     const result = questions.slice(0, totalQuestions);
-    console.log(`Parsed ${result.length} questions from document`);
+    console.log(`📊 Parsed ${result.length} questions`);
     return result;
   }
 
@@ -1988,12 +1931,12 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
     const ss = secondsLeft % 60;
     const low = secondsLeft <= 30;
     const totalAnswered = Object.keys(answers).length;
-    const isDocFile = fileType === 'doc' || fileType === 'docx';
+    const pdfUrl = examPdfUrls[exam.id] || exam.fileData;
     
     const questions = pdfQuestions.length > 0 ? pdfQuestions : 
       Array.from({ length: exam.totalQuestions }, (_, i) => ({
         id: i,
-        text: `Question ${i + 1}`,
+        text: `Question ${i + 1} (Read from PDF)`,
         options: ['A', 'B', 'C', 'D']
       }));
 
@@ -2020,77 +1963,84 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
           ))}
         </div>
 
-        <div className="card" style={{ maxWidth: 800, margin: "0 auto" }}>
-          {isDocFile && (
-            <div className="notice" style={{ marginBottom: 16, background: "#FFF8E1", borderColor: "#FFC107" }}>
-              <AlertTriangle size={16} style={{ flexShrink: 0, color: "#FF6F00" }} />
-              <div style={{ fontSize: 13 }}>
-                <strong>📝 Document uploaded as DOC file.</strong> Questions have been extracted below.
-                {isLoadingPdf && <span style={{ marginLeft: 8 }}>Extracting questions...</span>}
+        <div style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr", gap: 16, marginBottom: 16 }}>
+          {pdfUrl ? (
+            <div className="card" style={{ overflow: "hidden" }}>
+              <div style={{ marginBottom: 10, fontWeight: 600, color: "var(--muted)", fontSize: 12, display: "flex", justifyContent: "space-between" }}>
+                <span>📄 Question Paper</span>
+                {isLoadingPdf && <span style={{ color: "var(--accent)" }}>Extracting questions...</span>}
+              </div>
+              <iframe 
+                title="question-paper" 
+                src={`${pdfUrl}#page=${qIndex + 1}&toolbar=0&navpanes=0`} 
+                className="pdf-frame" 
+                style={{ height: 400 }}
+              />
+              {pdfQuestions.length > 0 && (
+                <div style={{ marginTop: 10, fontSize: 12, color: "var(--success)" }}>
+                  ✅ {pdfQuestions.length} questions extracted. Select your answer below.
+                </div>
+              )}
+              {pdfError && (
+                <div style={{ marginTop: 10, fontSize: 12, color: "var(--danger)" }}>
+                  ⚠️ Could not extract questions. Please read from the document viewer.
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="card" style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: 200 }}>
+              <div className="empty" style={{ padding: 0 }}>
+                <AlertTriangle size={26} />
+                <div>The question paper isn't available. Read question {qIndex + 1} from your copy and select your answer.</div>
               </div>
             </div>
           )}
-
-          <div style={{ fontWeight: 600, marginBottom: 12, fontSize: 16 }}>
-            Question {qIndex + 1}
-            {answers[qIndex] !== undefined && (
-              <span style={{ marginLeft: 8, fontSize: 14, color: "var(--success)" }}>
-                ✓ Answered
-              </span>
-            )}
-          </div>
-          
-          <div style={{ 
-            marginBottom: 20, 
-            padding: 16, 
-            background: "var(--paper)", 
-            borderRadius: 8,
-            fontSize: 17,
-            lineHeight: 1.8
-          }}>
-            {currentQuestion.text || `Question ${qIndex + 1}`}
-          </div>
-          
-          <div style={{ fontWeight: 600, marginBottom: 12, fontSize: 14, color: "var(--muted)" }}>Select your answer:</div>
-          {currentQuestion.options && currentQuestion.options.length > 0 ? (
-            currentQuestion.options.map((option, oi) => {
-              const letter = LETTERS[oi] || String.fromCharCode(65 + oi);
-              return (
+          <div className="card">
+            <div style={{ fontWeight: 600, marginBottom: 12 }}>
+              Question {qIndex + 1}
+              {answers[qIndex] !== undefined && (
+                <span style={{ marginLeft: 8, fontSize: 14, color: "var(--success)" }}>
+                  ✓ Answered
+                </span>
+              )}
+            </div>
+            
+            <div style={{ 
+              marginBottom: 16, 
+              padding: 12, 
+              background: "var(--paper)", 
+              borderRadius: 8,
+              fontSize: 14,
+              lineHeight: 1.6
+            }}>
+              {currentQuestion.text || `Question ${qIndex + 1}`}
+            </div>
+            
+            <div style={{ fontWeight: 600, marginBottom: 8, fontSize: 13, color: "var(--muted)" }}>Select your answer:</div>
+            {currentQuestion.options && currentQuestion.options.length > 0 ? (
+              currentQuestion.options.map((option, oi) => {
+                const letter = LETTERS[oi] || String.fromCharCode(65 + oi);
+                return (
+                  <div key={oi} className={`option-row ${answers[qIndex] === oi ? "selected" : ""}`} onClick={() => selectAnswer(oi)} style={{ padding: "14px 16px" }}>
+                    <div className="option-letter" style={{ width: 30, height: 30, fontSize: 14 }}>{letter}</div>
+                    <div style={{ fontSize: 15, flex: 1 }}>{option}</div>
+                    {answers[qIndex] === oi && <Check size={20} color="var(--success)" style={{ marginLeft: "auto" }} />}
+                  </div>
+                );
+              })
+            ) : (
+              LETTERS.map((l, oi) => (
                 <div key={oi} className={`option-row ${answers[qIndex] === oi ? "selected" : ""}`} onClick={() => selectAnswer(oi)} style={{ padding: "14px 16px" }}>
-                  <div className="option-letter" style={{ width: 30, height: 30, fontSize: 14 }}>{letter}</div>
-                  <div style={{ fontSize: 15, flex: 1 }}>{option}</div>
+                  <div className="option-letter" style={{ width: 30, height: 30, fontSize: 14 }}>{l}</div>
+                  <div style={{ fontSize: 15, flex: 1 }}>Option {l}</div>
                   {answers[qIndex] === oi && <Check size={20} color="var(--success)" style={{ marginLeft: "auto" }} />}
                 </div>
-              );
-            })
-          ) : (
-            LETTERS.map((l, oi) => (
-              <div key={oi} className={`option-row ${answers[qIndex] === oi ? "selected" : ""}`} onClick={() => selectAnswer(oi)} style={{ padding: "14px 16px" }}>
-                <div className="option-letter" style={{ width: 30, height: 30, fontSize: 14 }}>{l}</div>
-                <div style={{ fontSize: 15, flex: 1 }}>Option {l}</div>
-                {answers[qIndex] === oi && <Check size={20} color="var(--success)" style={{ marginLeft: "auto" }} />}
-              </div>
-            ))
-          )}
-
-          {pdfQuestions.length > 0 && !isDocFile && (
-            <div style={{ marginTop: 16, fontSize: 12, color: "var(--success)", textAlign: "center" }}>
-              ✅ {pdfQuestions.length} questions extracted. Select your answer below.
-            </div>
-          )}
-          {pdfError && (
-            <div style={{ marginTop: 16, fontSize: 12, color: "var(--danger)", textAlign: "center" }}>
-              ⚠️ Could not extract questions. Please read from your document.
-            </div>
-          )}
-          {isLoadingPdf && (
-            <div style={{ marginTop: 16, fontSize: 12, color: "var(--muted)", textAlign: "center" }}>
-              🔄 Extracting questions from document...
-            </div>
-          )}
+              ))
+            )}
+          </div>
         </div>
 
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div style={{ display: "flex", gap: 8 }}>
             <button className="btn btn-outline" disabled={qIndex === 0} onClick={() => setQIndex(qIndex - 1)}>
               <ChevronLeft size={15} /> Previous
