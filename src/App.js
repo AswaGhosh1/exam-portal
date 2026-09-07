@@ -1562,16 +1562,41 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
   }
 
   async function extractTextFromBuffer(buffer) {
-    try {
-      const decoder = new TextDecoder('utf-8');
-      const text = decoder.decode(buffer);
-      const cleanText = text.replace(/[^\x20-\x7E\n\r]/g, ' ');
-      return cleanText;
-    } catch (e) {
-      console.error("Text extraction failed:", e);
-      return '';
+  try {
+    // Try UTF-8 decoding first
+    const decoder = new TextDecoder('utf-8');
+    let text = decoder.decode(buffer);
+    
+    // If text contains too many special characters, try different encoding
+    if (text.replace(/[^\x20-\x7E\n\r\t]/g, '').length < text.length * 0.5) {
+      // Try Latin-1 (ISO-8859-1) which handles more characters
+      const decoderLatin = new TextDecoder('latin1');
+      text = decoderLatin.decode(buffer);
     }
+    
+    // Clean the text
+    text = text.replace(/\x00/g, ''); // Remove null bytes
+    text = text.replace(/[\x01-\x08\x0B\x0C\x0E-\x1F]/g, ' '); // Remove control characters
+    text = text.replace(/\s+/g, ' '); // Normalize whitespace
+    
+    // Keep only readable characters
+    text = text.replace(/[^\x20-\x7E\n\r\t]/g, ' ');
+    
+    // Remove repeated special characters
+    text = text.replace(/([^a-zA-Z0-9\s]){3,}/g, '');
+    
+    // Clean up multiple spaces
+    text = text.replace(/\s{3,}/g, '  ');
+    
+    console.log("📝 Extracted text length:", text.length);
+    console.log("📝 Sample:", text.substring(0, 300));
+    
+    return text;
+  } catch (e) {
+    console.error("Text extraction failed:", e);
+    return '';
   }
+}
 
   function parseQuestionsImproved(text, totalQuestions) {
     const questions = [];
