@@ -276,14 +276,16 @@ export default function App() {
       try {
         console.log('🔄 Loading data from Supabase...');
         
-        // Load from Supabase
-        const [studentsResult, facultyResult] = await Promise.all([
+        // Load all data from Supabase in parallel
+        const [studentsResult, facultyResult, examsResult] = await Promise.all([
           supabase.from('students').select('*'),
-          supabase.from('faculty_accounts').select('*')
+          supabase.from('faculty_accounts').select('*'),
+          supabase.from('exams').select('*')
         ]);
         
         console.log('📊 Supabase students:', studentsResult.data?.length || 0);
         console.log('📊 Supabase faculty:', facultyResult.data?.length || 0);
+        console.log('📊 Supabase exams:', examsResult.data?.length || 0);
         
         // Use Supabase data if available, otherwise use demo data
         const finalStudents = studentsResult.data?.length > 0 ? studentsResult.data : DEMO_STUDENTS;
@@ -291,6 +293,7 @@ export default function App() {
         
         setStudents(finalStudents);
         setFacultyAccounts(finalFaculty);
+        setExams(examsResult.data || []);
         
         // Load other data from localStorage
         const [n, e, a, r, no, ac, se] = await Promise.all([
@@ -304,7 +307,6 @@ export default function App() {
         ]);
         
         setNotes(n);
-        setExams(e);
         setAttendance(a);
         setResults(r);
         setNotifications(no);
@@ -312,7 +314,7 @@ export default function App() {
         setSettings(se);
         setLoading(false);
         
-        console.log('✅ Final - Students:', finalStudents.length, 'Faculty:', finalFaculty.length);
+        console.log('✅ Final - Students:', finalStudents.length, 'Faculty:', finalFaculty.length, 'Exams:', examsResult.data?.length || 0);
         console.log('📝 Source:', studentsResult.data?.length > 0 ? 'Supabase' : 'Demo Data');
       } catch (error) {
         console.error('❌ Error loading data:', error);
@@ -1059,7 +1061,6 @@ function NotesTab({ notes, setNotes, currentUser, showToast }) {
   );
 }
 
-
 /* ---------------------------------- Exams ---------------------------------- */
 
 function ExamsTab({ exams, setExams, students, notifications, setNotifications, examPdfUrls, setExamPdf, showToast }) {
@@ -1405,8 +1406,6 @@ function ExamsTab({ exams, setExams, students, notifications, setNotifications, 
     </div>
   );
 }
-
-
 
 /* ---------------------------------- Take Exam ---------------------------------- */
 
