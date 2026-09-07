@@ -1091,74 +1091,102 @@ function ExamsTab({ exams, setExams, students, notifications, setNotifications, 
     setTotalQuestions(10); setAnswerKey(Array(10).fill(0)); setFile(null); setFileType(""); setCreating(false);
   }
 
-  async function saveExam() {
-    if (!title.trim() || !date || !time) { 
-      showToast("Fill in the title, date and time.", "error"); 
-      return; 
-    }
+async function saveExam() {
+  if (!title.trim() || !date || !time) { 
+    showToast("Fill in the title, date and time.", "error"); 
+    return; 
+  }
+  
+  if (!file) { 
+    showToast("Upload the question paper (PDF or DOC).", "error"); 
+    return; 
+  }
+  
+  const fileExtension = file.name.split('.').pop().toLowerCase();
+  const allowedTypes = ['pdf', 'doc', 'docx'];
+  if (!allowedTypes.includes(fileExtension)) {
+    showToast(`Please upload a PDF or DOC file.`, "error");
+    return;
+  }
+  
+  setIsSaving(true);
+  
+  try {
+    // Step 1: Upload file to Supabase Storage
+    const filePath = `exams/${uid()}/${file.name}`;
+    const { data: uploadData, error: uploadError } = await supabase.storage
+      .from('exam-files')
+      .upload(filePath, file);
     
-    if (!file) { 
-      showToast("Upload the question paper (PDF or DOC).", "error"); 
-      return; 
-    }
-    
-    const fileExtension = file.name.split('.').pop().toLowerCase();
-    const allowedTypes = ['pdf', 'doc', 'docx'];
-    if (!allowedTypes.includes(fileExtension)) {
-      showToast(`Please upload a PDF or DOC file. You uploaded a .${fileExtension} file.`, "error");
+    if (uploadError) {
+      console.error('Upload error:', uploadError);
+      showToast('Failed to upload file: ' + uploadError.message, 'error');
+      setIsSaving(false);
       return;
     }
     
-    setIsSaving(true);
+    console.log('✅ File uploaded:', uploadData);
     
+    // Step 2: Get public URL
+    const { data: { publicUrl } } = supabase.storage
+      .from('exam-files')
+      .getPublicUrl(filePath);
+    
+    console.log('🔗 Public URL:', publicUrl);
+    
+    // Step 3: Save exam metadata to database
     const scheduledAt = new Date(`${date}T${time}`).toISOString();
     const id = uid();
-    const fileBase64 = await fileToBase64(file);
     
     const rec = {
-      id, 
-      code: genCode(), 
-      title: title.trim(), 
-      subject: subject.trim(), 
-      scheduledAt,
-      durationMins: Number(duration) || 30, 
-      totalQuestions, 
+      id: id,
+      code: genCode(),
+      title: title.trim(),
+      subject: subject.trim(),
+      scheduledAt: scheduledAt,
+      durationMins: Number(duration) || 30,
+      totalQuestions: totalQuestions,
       correctAnswers: answerKey,
-      fileName: file.name, 
+      fileName: file.name,
       fileType: fileExtension,
-      notified: false, 
-      createdAt: new Date().toISOString(),
-      fileData: fileBase64
+      fileData: publicUrl,  // Store URL instead of base64
+      notified: false,
+      createdAt: new Date().toISOString()
     };
     
-    try {
-      // Save to Supabase
-      const { data, error } = await supabase
-        .from('exams')
-        .insert([rec])
-        .select();
-      
-      if (error) throw error;
-      
-      // Create blob URL for viewing
-      const blob = new Blob([file], { type: file.type || 'application/octet-stream' });
-      const blobUrl = URL.createObjectURL(blob);
-      setExamPdf(id, blobUrl);
-      
-      // Update local state with Supabase data
-      const updatedExams = [...exams, rec];
-      setExams(updatedExams);
-      await saveKey(STORAGE_KEYS.exams, updatedExams);
-      
-      resetForm();
-      showToast(`"${rec.title}" scheduled with ${file.name}. Link code: ${rec.code}`);
-    } catch (error) {
-      console.error('Error saving exam:', error);
-      showToast('Failed to save exam to database. Please try again.', 'error');
-    } finally {
+    const { data, error } = await supabase
+      .from('exams')
+      .insert([rec])
+      .select();
+    
+    if (error) {
+      console.error('Database error:', error);
+      showToast('Failed to save exam: ' + error.message, 'error');
       setIsSaving(false);
+      return;
     }
+    
+    console.log('✅ Exam saved:', data);
+    
+    // Set blob URL for viewing
+    const blob = new Blob([file], { type: file.type || 'application/octet-stream' });
+    const blobUrl = URL.createObjectURL(blob);
+    setExamPdf(id, blobUrl);
+    
+    const updatedExams = [...exams, rec];
+    setExams(updatedExams);
+    await saveKey(STORAGE_KEYS.exams, updatedExams);
+    
+    resetForm();
+    showToast(`"${rec.title}" scheduled! File uploaded to cloud. Code: ${rec.code}`);
+  } catch (error) {
+    console.error('Error saving exam:', error);
+    showToast('Failed to save exam: ' + error.message, 'error');
+  } finally {
+    setIsSaving(false);
   }
+}
+
 
   async function removeExam(id) { 
     try {
@@ -1448,13 +1476,15 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
   }
 
   async function beginExam() {
-    const already = results.find((r) => r.examId === exam.id && r.studentId === currentUser.id);
-    if (already) { 
-      setFinished(already); 
-      setShowReview(true);
-      return; 
-    }
-    
+    // In beginExam function
+const fileUrl = examPdfUrls[exam.id] || exam.fileData;
+if (fileUrl) {
+  await extractQuestionsFromFile(fileUrl);
+} else {
+  setPdfError(true);
+  showToast("No file found. Please contact your faculty.", "warning");
+}
+
     setAnswers({}); 
     setQIndex(0); 
     setSecondsLeft(exam.durationMins * 60); 
