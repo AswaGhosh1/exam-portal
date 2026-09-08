@@ -1435,8 +1435,6 @@ async function saveExam() {
   );
 }
 
-/* ---------------------------------- Take Exam ---------------------------------- */
-
 function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, showToast }) {
   const [code, setCode] = useState("");
   const [exam, setExam] = useState(null);
@@ -1452,7 +1450,8 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
   const [fileType, setFileType] = useState("pdf");
   const [showReview, setShowReview] = useState(false);
   const [reviewIndex, setReviewIndex] = useState(0);
-  const [showPdfViewer, setShowPdfViewer] = useState(false);
+  const [showPdfViewer, setShowPdfViewer] = useState(true); // CHANGED: Default to visible
+  const [extractedText, setExtractedText] = useState(""); // NEW: Store extracted text
 
   useEffect(() => {
     if (!started || finished) return;
@@ -1468,6 +1467,7 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
     setPdfQuestions([]);
     setPdfError(false);
     setShowReview(false);
+    setExtractedText(""); // Reset extracted text
     if (found.fileType) {
       setFileType(found.fileType);
     } else {
@@ -1490,7 +1490,8 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
     setStarted(true);
     setPdfError(false);
     setShowReview(false);
-    setShowPdfViewer(false);
+    setShowPdfViewer(true); // Show PDF viewer by default
+    setExtractedText("");
     
     // Create default questions
     const defaultQuestions = [];
@@ -1516,6 +1517,7 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
 
   async function extractQuestionsFromFile(fileUrl, defaultQuestions) {
     setIsLoadingPdf(true);
+    setPdfError(false);
     
     try {
       const response = await fetch(fileUrl);
@@ -1538,26 +1540,33 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
           console.log("Mammoth failed");
         }
       } else {
-        const arrayBuffer = await blob.arrayBuffer();
-        const decoder = new TextDecoder('utf-8');
-        text = decoder.decode(arrayBuffer);
+        // For PDF, use a simpler approach - just show the PDF
+        // We'll display the PDF directly instead of trying to parse
+        text = "📄 Please refer to the PDF viewer below for questions.";
       }
       
-      if (text && text.trim().length > 10) {
+      setExtractedText(text);
+      
+      if (text && text.trim().length > 10 && !text.includes("PDF viewer")) {
         const parsedQuestions = parseQuestionsImproved(text, exam.totalQuestions);
         if (parsedQuestions.length > 0) {
           setPdfQuestions(parsedQuestions);
-          showToast(`✅ Extracted ${parsedQuestions.length} questions`, "success");
+          showToast(`✅ Extracted ${parsedQuestions.length} questions from document`, "success");
           return;
         }
       }
       
       // If extraction failed, use default questions
       setPdfQuestions(defaultQuestions);
-      showToast("📄 Using default question numbers. Read from PDF viewer.", "info");
+      if (fileExtension === 'pdf') {
+        showToast("📄 Read questions from the PDF viewer below", "info");
+      } else {
+        showToast("📄 Using default question numbers. Read from the document viewer.", "info");
+      }
     } catch (error) {
       console.log("Text extraction failed, using default questions");
       setPdfQuestions(defaultQuestions);
+      setPdfError(true);
     } finally {
       setIsLoadingPdf(false);
     }
@@ -1717,10 +1726,12 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
     setShowReview(false);
     setReviewIndex(0);
     setShowPdfViewer(false);
+    setExtractedText("");
   }
 
-  // Review mode
+  // Review mode (unchanged)
   if (showReview && finished) {
+    // ... (keep your existing review code)
     const pct = Math.round((finished.score / finished.total) * 100);
     const questions = pdfQuestions.length > 0 ? pdfQuestions : 
       Array.from({ length: exam.totalQuestions }, (_, i) => ({
@@ -1905,6 +1916,7 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
     );
   }
 
+  // MAIN EXAM VIEW - This is where the fix is
   if (started && exam) {
     const isLast = qIndex === exam.totalQuestions - 1;
     const mm = Math.floor(secondsLeft / 60);
@@ -1932,6 +1944,7 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
               <span style={{ marginLeft: 12, color: "var(--muted)" }}>
                 • Answered: {totalAnswered}/{exam.totalQuestions}
               </span>
+              {isLoadingPdf && <span style={{ marginLeft: 12, color: "var(--accent)" }}>⏳ Extracting questions...</span>}
             </div>
           </div>
           <div className={`timer-badge ${low ? "low" : ""}`}><Timer size={16} /> {pad(mm)}:{pad(ss)}</div>
@@ -1944,30 +1957,83 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
           ))}
         </div>
 
-        {/* PDF Viewer (Small, at the top - optional) */}
+        {/* PDF VIEWER - ALWAYS VISIBLE AND EXPANDED */}
         {pdfUrl && (
           <div style={{ marginBottom: 16 }}>
-            <button 
-              className="btn btn-outline btn-sm" 
-              onClick={() => setShowPdfViewer(!showPdfViewer)}
-              style={{ marginBottom: 8 }}
-            >
-              {showPdfViewer ? '📄 Hide PDF Viewer' : '📄 Show PDF Viewer'}
-            </button>
+            <div style={{ 
+              display: "flex", 
+              justifyContent: "space-between", 
+              alignItems: "center",
+              marginBottom: 8,
+              background: "var(--primary)",
+              color: "#fff",
+              padding: "8px 14px",
+              borderRadius: "8px 8px 0 0"
+            }}>
+              <span style={{ fontWeight: 600, fontSize: 14 }}>
+                📄 Question Paper ({fileType.toUpperCase()}) 
+                {isLoadingPdf && <span style={{ marginLeft: 8, fontSize: 12, opacity: 0.8 }}>⏳ loading...</span>}
+              </span>
+              <button 
+                className="btn btn-sm" 
+                style={{ 
+                  background: "rgba(255,255,255,0.15)", 
+                  color: "#fff", 
+                  border: "none",
+                  padding: "4px 12px",
+                  cursor: "pointer",
+                  borderRadius: "4px"
+                }}
+                onClick={() => setShowPdfViewer(!showPdfViewer)}
+              >
+                {showPdfViewer ? '🔼 Hide' : '🔽 Show'}
+              </button>
+            </div>
             {showPdfViewer && (
-              <div className="card" style={{ overflow: "hidden", maxHeight: 200 }}>
+              <div className="card" style={{ 
+                overflow: "hidden", 
+                padding: 0,
+                borderRadius: "0 0 8px 8px",
+                borderTop: "none",
+                minHeight: 300
+              }}>
                 <iframe 
                   title="question-paper" 
-                  src={`${pdfUrl}#page=${qIndex + 1}&toolbar=0&navpanes=0`} 
+                  src={`${pdfUrl}#toolbar=1&navpanes=1`} 
                   className="pdf-frame" 
-                  style={{ height: 150 }}
+                  style={{ 
+                    height: 450, 
+                    width: "100%",
+                    border: "none",
+                    background: "#f5f5f0"
+                  }}
                 />
+                <div style={{ 
+                  padding: "8px 14px", 
+                  background: "var(--paper)", 
+                  fontSize: 11, 
+                  color: "var(--muted)",
+                  borderTop: "1px solid var(--line)",
+                  display: "flex",
+                  justifyContent: "space-between"
+                }}>
+                  <span>📌 Scroll through the PDF to read all questions</span>
+                  <span>{exam.fileName || "Question Paper"}</span>
+                </div>
               </div>
             )}
           </div>
         )}
 
-        {/* Question as Text - This is what you wanted */}
+        {/* If no PDF URL, show a message */}
+        {!pdfUrl && (
+          <div className="notice" style={{ marginBottom: 16, background: "#fef3e2" }}>
+            <AlertTriangle size={15} style={{ flexShrink: 0 }} />
+            <div>⚠️ The question paper file is not available. Please contact your faculty.</div>
+          </div>
+        )}
+
+        {/* QUESTION AS TEXT - ALWAYS VISIBLE */}
         <div className="card" style={{ maxWidth: 800, margin: "0 auto" }}>
           <div style={{ fontWeight: 600, marginBottom: 12, fontSize: 18 }}>
             Question {qIndex + 1}
@@ -1978,14 +2044,15 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
             )}
           </div>
           
-          {/* Question Text */}
+          {/* Question Text - Always shown */}
           <div style={{ 
             marginBottom: 20, 
             padding: 16, 
             background: "var(--paper)", 
             borderRadius: 8,
             fontSize: 16,
-            lineHeight: 1.8
+            lineHeight: 1.8,
+            minHeight: 60
           }}>
             {currentQuestion.text || `Question ${qIndex + 1}`}
           </div>
@@ -2004,7 +2071,8 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
               );
             })
           ) : (
-            LETTERS.map((l, oi) => (
+            // Fallback if no options extracted
+            LETTERS.slice(0, 4).map((l, oi) => (
               <div key={oi} className={`option-row ${answers[qIndex] === oi ? "selected" : ""}`} onClick={() => selectAnswer(oi)} style={{ padding: "14px 16px" }}>
                 <div className="option-letter" style={{ width: 30, height: 30, fontSize: 14 }}>{l}</div>
                 <div style={{ fontSize: 15, flex: 1 }}>Option {l}</div>
@@ -2013,10 +2081,10 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
             ))
           )}
 
-          {/* Question counter */}
           <div style={{ marginTop: 16, fontSize: 12, color: "var(--muted)", textAlign: "center" }}>
             {qIndex + 1} of {exam.totalQuestions} questions
             {pdfQuestions.length > 0 && ` • ${pdfQuestions.length} questions loaded`}
+            {pdfError && <span style={{ color: "var(--danger)", display: "block", marginTop: 4 }}>⚠️ Could not extract questions. Please read from PDF.</span>}
           </div>
         </div>
 
@@ -2089,6 +2157,7 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
     );
   }
 
+  // INITIAL EXAM SEARCH VIEW
   return (
     <div>
       <div className="page-title font-display">Take Exam</div>
@@ -2101,6 +2170,9 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
               <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="e.g. 7XQ2LK" className="font-mono" />
               <button className="btn btn-primary" onClick={findExam}><Link2 size={15} /> Find exam</button>
             </div>
+            <div style={{ marginTop: 12, fontSize: 12, color: "var(--muted)" }}>
+              📚 Exams available: {exams.length}
+            </div>
           </>
         ) : (
           <>
@@ -2112,12 +2184,21 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
                   {exam.subject} · {exam.durationMins} min · {exam.totalQuestions} questions
                   {exam.fileType && <span style={{ marginLeft: 8 }}>· {exam.fileType.toUpperCase()} file</span>}
                 </div>
+                {exam.fileName && (
+                  <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
+                    📄 {exam.fileName}
+                  </div>
+                )}
               </div>
             </div>
-            <div style={{ fontSize: 13, marginBottom: 14 }}>Signed in as <b>{currentUser.name}</b> ({currentUser.email})</div>
+            <div style={{ fontSize: 13, marginBottom: 14 }}>Signed in as <b>{currentUser.name}</b></div>
             <div style={{ display: "flex", gap: 10 }}>
               <button className="btn btn-primary" onClick={beginExam}><GraduationCap size={15} /> Start exam</button>
               <button className="btn btn-outline" onClick={() => setExam(null)}>Back</button>
+            </div>
+            <div className="notice" style={{ marginTop: 12 }}>
+              <AlertTriangle size={14} style={{ flexShrink: 0 }} />
+              <div>The question paper will be shown as a PDF viewer. Read the questions from there.</div>
             </div>
           </>
         )}
