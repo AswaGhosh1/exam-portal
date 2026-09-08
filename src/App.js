@@ -1085,6 +1085,7 @@ function ExamsTab({ exams, setExams, students, notifications, setNotifications, 
   const [isExtracting, setIsExtracting] = useState(false);
   const [totalQuestions, setTotalQuestions] = useState(10);
   const [answerKey, setAnswerKey] = useState(Array(10).fill(0));
+  const [uploadProgress, setUploadProgress] = useState(0);
 
   function changeTotalQuestions(val) {
     const n = Math.max(1, Math.min(200, Number(val) || 1));
@@ -1108,6 +1109,7 @@ function ExamsTab({ exams, setExams, students, notifications, setNotifications, 
     setFileType(""); 
     setCreating(false);
     setExtractedQuestions([]);
+    setUploadProgress(0);
   }
 
   // Extract questions from PDF using pdf.js
@@ -1230,6 +1232,7 @@ function ExamsTab({ exams, setExams, students, notifications, setNotifications, 
   async function handleFileUpload(file) {
     setIsExtracting(true);
     setExtractedQuestions([]);
+    setUploadProgress(0);
     
     try {
       const fileExtension = file.name.split('.').pop().toLowerCase();
@@ -1285,17 +1288,40 @@ function ExamsTab({ exams, setExams, students, notifications, setNotifications, 
     }
     
     setIsSaving(true);
+    setUploadProgress(10);
     
     try {
       const id = uid();
       const scheduledAt = new Date(`${date}T${time}`).toISOString();
       
-      const fileData = await new Promise((resolve) => {
-        const reader = new FileReader();
-        reader.onload = (e) => resolve(e.target.result);
-        reader.readAsDataURL(file);
-      });
+      // Step 1: Upload file to Supabase Storage
+      const filePath = `exams/${id}/${file.name}`;
+      console.log('📤 Uploading file to Supabase Storage:', filePath);
       
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from('exam-files')
+        .upload(filePath, file);
+      
+      setUploadProgress(50);
+      
+      if (uploadError) {
+        console.error('Upload error:', uploadError);
+        showToast('Failed to upload file: ' + uploadError.message, 'error');
+        setIsSaving(false);
+        return;
+      }
+      
+      console.log('✅ File uploaded successfully:', uploadData);
+      
+      // Step 2: Get public URL
+      const { data: { publicUrl } } = supabase.storage
+        .from('exam-files')
+        .getPublicUrl(filePath);
+      
+      console.log('🔗 Public URL:', publicUrl);
+      setUploadProgress(70);
+      
+      // Step 3: Prepare exam record with public URL
       const rec = {
         id: id,
         code: genCode(),
@@ -1307,16 +1333,19 @@ function ExamsTab({ exams, setExams, students, notifications, setNotifications, 
         correctAnswers: answerKey,
         fileName: file.name,
         fileType: fileType,
-        fileData: fileData,
+        fileUrl: publicUrl,  // Store the public URL
+        fileData: null,      // Don't store base64
         notified: false,
         createdAt: new Date().toISOString()
       };
       
-      // Save exam to Supabase
+      // Step 4: Save exam to Supabase
       const { data, error } = await supabase
         .from('exams')
         .insert([rec])
         .select();
+      
+      setUploadProgress(85);
       
       if (error) {
         console.error('Database error:', error);
@@ -1325,7 +1354,7 @@ function ExamsTab({ exams, setExams, students, notifications, setNotifications, 
         return;
       }
       
-      // Save questions to Supabase
+      // Step 5: Save questions to Supabase
       const questionsData = extractedQuestions.map((q, index) => ({
         exam_id: id,
         question_number: index + 1,
@@ -1338,6 +1367,8 @@ function ExamsTab({ exams, setExams, students, notifications, setNotifications, 
         .from('exam_questions')
         .insert(questionsData);
       
+      setUploadProgress(95);
+      
       if (questionError) {
         console.error('Question save error:', questionError);
         showToast('Warning: Questions saved but error occurred.', 'error');
@@ -1345,12 +1376,15 @@ function ExamsTab({ exams, setExams, students, notifications, setNotifications, 
         console.log(`✅ ${questionsData.length} questions saved to database`);
       }
       
-      // Save to localStorage
+      // Step 6: Save to localStorage
       const updatedExams = [...exams, rec];
       setExams(updatedExams);
       await saveKey(STORAGE_KEYS.exams, updatedExams);
       
-      setExamPdf(id, fileData);
+      // Set the URL for preview
+      setExamPdf(id, publicUrl);
+      
+      setUploadProgress(100);
       resetForm();
       showToast(`✅ "${rec.title}" scheduled! ${questionsData.length} questions saved. Code: ${rec.code}`);
     } catch (error) {
@@ -1358,6 +1392,7 @@ function ExamsTab({ exams, setExams, students, notifications, setNotifications, 
       showToast('Failed to save exam: ' + error.message, 'error');
     } finally {
       setIsSaving(false);
+      setUploadProgress(0);
     }
   }
 
@@ -1428,7 +1463,7 @@ function ExamsTab({ exams, setExams, students, notifications, setNotifications, 
   }
 
   function previewFile(exam) {
-    const url = examPdfUrls[exam.id] || exam.fileData || exam.fileUrl;
+    const url = examPdfUrls[exam.id] || exam.fileUrl || exam.fileData;
     if (!url) { 
       showToast("This file isn't available.", "error"); 
       return; 
@@ -1554,6 +1589,25 @@ function ExamsTab({ exams, setExams, students, notifications, setNotifications, 
           </div>
 
           <div className="divider" />
+          
+          {/* Upload Progress */}
+          {isSaving && uploadProgress > 0 && uploadProgress < 100 && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 4 }}>
+                Uploading file to cloud... {uploadProgress}%
+              </div>
+              <div style={{ width: "100%", height: 6, background: "var(--line)", borderRadius: 3, overflow: "hidden" }}>
+                <div style={{ 
+                  width: `${uploadProgress}%`, 
+                  height: "100%", 
+                  background: "var(--accent)", 
+                  borderRadius: 3,
+                  transition: "width 0.3s ease"
+                }} />
+              </div>
+            </div>
+          )}
+          
           <div style={{ display: "flex", gap: 10 }}>
             <button 
               className="btn btn-primary" 
@@ -1561,7 +1615,7 @@ function ExamsTab({ exams, setExams, students, notifications, setNotifications, 
               disabled={isSaving || isExtracting || extractedQuestions.length === 0}
             >
               <CheckCircle2 size={15} /> 
-              {isSaving ? "Saving..." : isExtracting ? "Extracting..." : `Save Exam (${extractedQuestions.length} questions)`}
+              {isSaving ? "Uploading..." : isExtracting ? "Extracting..." : `Save Exam (${extractedQuestions.length} questions)`}
             </button>
             <button className="btn btn-outline" onClick={resetForm}>Cancel</button>
           </div>
@@ -1596,6 +1650,11 @@ function ExamsTab({ exams, setExams, students, notifications, setNotifications, 
                   {exam.fileName && (
                     <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
                       {fileIcon} {exam.fileName} ({fileTypeLabel})
+                    </div>
+                  )}
+                  {exam.fileUrl && (
+                    <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 1, opacity: 0.7 }}>
+                      🔗 File stored in cloud
                     </div>
                   )}
                 </div>
@@ -1677,6 +1736,124 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
     setShowReview(false);
   }
 
+  // Extract questions from DOC file using mammoth
+  async function extractQuestionsFromFile(fileUrl, totalQuestions) {
+    try {
+      console.log('📄 Attempting to extract questions from file...');
+      
+      // Fetch the file from Supabase Storage
+      const response = await fetch(fileUrl);
+      const arrayBuffer = await response.arrayBuffer();
+      
+      // Use mammoth to extract text from DOC
+      const result = await mammoth.extractRawText({ arrayBuffer: arrayBuffer });
+      const text = result.value;
+      
+      console.log('📝 Extracted text length:', text.length);
+      
+      if (text.length < 50) {
+        console.log('⚠️ Not enough text extracted');
+        return null;
+      }
+      
+      // Parse questions from text
+      const questions = [];
+      const lines = text.split('\n');
+      
+      let currentQuestion = null;
+      let currentOptions = [];
+      let foundQuestions = false;
+      
+      // Patterns for questions (Q1., Q2., 1., 2., Question 1, etc.)
+      const questionPatterns = [
+        /^Q(\d+)[\.\)]\s*(.+)/i,
+        /^(\d+)[\.\)]\s*(.+)/,
+        /^Question\s*(\d+)[\.\)]\s*(.+)/i,
+      ];
+      
+      // Patterns for options (A., B., C., D.)
+      const optionPatterns = [
+        /^([A-D])[\.\)]\s*(.+)/,
+        /^([a-d])[\.\)]\s*(.+)/,
+        /^\(([A-D])\)\s*(.+)/,
+      ];
+      
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.length < 2) continue;
+        
+        let isQuestion = false;
+        let questionMatch = null;
+        
+        for (const pattern of questionPatterns) {
+          const match = trimmed.match(pattern);
+          if (match) {
+            questionMatch = match;
+            isQuestion = true;
+            foundQuestions = true;
+            break;
+          }
+        }
+        
+        if (isQuestion && questionMatch) {
+          // Save previous question
+          if (currentQuestion && currentOptions.length > 0) {
+            questions.push({
+              text: currentQuestion,
+              options: currentOptions.slice(0, 4)
+            });
+          }
+          currentQuestion = (questionMatch[2] || questionMatch[1] || trimmed).trim();
+          currentOptions = [];
+        } else {
+          let isOption = false;
+          let optionMatch = null;
+          
+          for (const pattern of optionPatterns) {
+            const match = trimmed.match(pattern);
+            if (match) {
+              optionMatch = match;
+              isOption = true;
+              break;
+            }
+          }
+          
+          if (isOption && optionMatch && currentQuestion) {
+            const optionText = (optionMatch[2] || optionMatch[1] || trimmed).trim();
+            if (optionText.length > 1) {
+              currentOptions.push(optionText);
+            }
+          } else if (currentQuestion && currentOptions.length > 0) {
+            // Continue previous option
+            const lastIndex = currentOptions.length - 1;
+            currentOptions[lastIndex] = currentOptions[lastIndex] + ' ' + trimmed;
+          } else if (currentQuestion) {
+            // Continue question text
+            currentQuestion = currentQuestion + ' ' + trimmed;
+          }
+        }
+      }
+      
+      // Save last question
+      if (currentQuestion && currentOptions.length > 0) {
+        questions.push({
+          text: currentQuestion,
+          options: currentOptions.slice(0, 4)
+        });
+      }
+      
+      if (questions.length > 0) {
+        console.log(`✅ Found ${questions.length} questions`);
+        return questions.slice(0, totalQuestions || questions.length);
+      }
+      
+      return null;
+    } catch (error) {
+      console.error('Error extracting questions from file:', error);
+      return null;
+    }
+  }
+
   async function beginExam() {
     const already = results.find((r) => r.examId === exam.id && r.studentId === currentUser.id);
     if (already) { 
@@ -1694,9 +1871,8 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
     
     try {
       console.log('🔍 Loading questions for exam:', exam.id);
-      console.log('📝 Exam data:', exam);
       
-      // Load questions from Supabase
+      // First, try to load questions from Supabase database
       const { data: questionsData, error: questionsError } = await supabase
         .from('exam_questions')
         .select('*')
@@ -1706,6 +1882,7 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
       console.log('📊 Questions from DB:', questionsData);
       
       if (questionsData && questionsData.length > 0) {
+        // Questions found in database - use them
         const parsedQuestions = questionsData.map(q => ({
           id: q.question_number - 1,
           text: q.question_text || `Question ${q.question_number}`,
@@ -1713,23 +1890,81 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
           correctAnswer: q.correct_answer || 0
         }));
         setQuestions(parsedQuestions);
-        showToast(`✅ Loaded ${parsedQuestions.length} questions`, "success");
-        console.log('✅ Questions loaded:', parsedQuestions);
-      } else {
-        // No questions in database - create default
-        const defaultQuestions = [];
-        for (let i = 0; i < exam.totalQuestions; i++) {
-          defaultQuestions.push({
-            id: i,
-            text: `Question ${i + 1}`,
-            options: ['A', 'B', 'C', 'D'],
-            correctAnswer: exam.correctAnswers ? exam.correctAnswers[i] || 0 : 0
-          });
-        }
-        setQuestions(defaultQuestions);
-        showToast(`📄 ${defaultQuestions.length} default questions loaded`, "info");
-        console.log('📄 Default questions:', defaultQuestions);
+        showToast(`✅ Loaded ${parsedQuestions.length} questions from database`, "success");
+        console.log('✅ Questions loaded from DB:', parsedQuestions);
+        setIsLoading(false);
+        return;
       }
+      
+      // No questions in database - try to extract from the uploaded file
+      console.log('📄 No questions in DB, trying to extract from file...');
+      
+      // Get the file URL from the exam
+      const fileUrl = exam.fileData || exam.fileUrl || examPdfUrls[exam.id];
+      
+      if (fileUrl) {
+        console.log('📄 File URL found:', fileUrl);
+        
+        // Extract questions from the file
+        const extractedQuestions = await extractQuestionsFromFile(fileUrl, exam.totalQuestions);
+        
+        if (extractedQuestions && extractedQuestions.length > 0) {
+          // Add correctAnswer from exam.correctAnswers if available
+          const questionsWithAnswers = extractedQuestions.map((q, index) => ({
+            ...q,
+            correctAnswer: exam.correctAnswers ? exam.correctAnswers[index] || 0 : 0
+          }));
+          
+          setQuestions(questionsWithAnswers);
+          showToast(`✅ Extracted ${questionsWithAnswers.length} questions from file`, "success");
+          console.log('✅ Questions extracted from file:', questionsWithAnswers);
+          
+          // Save extracted questions to database for future use
+          try {
+            const questionsToSave = questionsWithAnswers.map((q, index) => ({
+              exam_id: exam.id,
+              question_number: index + 1,
+              question_text: q.text,
+              options: q.options || ['A', 'B', 'C', 'D'],
+              correct_answer: q.correctAnswer || 0
+            }));
+            
+            const { error: saveError } = await supabase
+              .from('exam_questions')
+              .insert(questionsToSave);
+            
+            if (saveError) {
+              console.error('Error saving questions to DB:', saveError);
+            } else {
+              console.log('✅ Questions saved to database for future use');
+            }
+          } catch (saveError) {
+            console.error('Error saving questions:', saveError);
+          }
+          
+          setIsLoading(false);
+          return;
+        } else {
+          console.log('⚠️ No questions extracted from file');
+        }
+      } else {
+        console.log('⚠️ No file URL found for this exam');
+      }
+      
+      // Fallback: Create default questions
+      console.log('📄 Using default questions as fallback');
+      const defaultQuestions = [];
+      for (let i = 0; i < exam.totalQuestions; i++) {
+        defaultQuestions.push({
+          id: i,
+          text: `📄 Read Question ${i + 1} from the uploaded document`,
+          options: ['A', 'B', 'C', 'D'],
+          correctAnswer: exam.correctAnswers ? exam.correctAnswers[i] || 0 : 0
+        });
+      }
+      setQuestions(defaultQuestions);
+      showToast(`📄 ${defaultQuestions.length} questions loaded. Please read from the document.`, "info");
+      
     } catch (error) {
       console.error("Error loading questions:", error);
       const defaultQuestions = [];
