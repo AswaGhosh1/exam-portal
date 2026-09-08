@@ -7,6 +7,7 @@ import {
   Timer, Shield, LogOut, Lock, KeyRound, RefreshCw, Settings as SettingsIcon,
   Download
 } from "lucide-react";
+import * as pdfjsLib from 'pdfjs-dist';
 
 /* ---------------------------------- helpers ---------------------------------- */
 
@@ -1486,6 +1487,8 @@ async function notifyStudents(exam) {
   );
 }
 
+/* ---------------------------------- TakeExamTab ---------------------------------- */
+
 function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, showToast }) {
   const [code, setCode] = useState("");
   const [exam, setExam] = useState(null);
@@ -1518,101 +1521,129 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
     setShowReview(false);
   }
 
-  // Extract questions from PDF file
+  // Extract questions from PDF using pdf.js
   async function extractQuestionsFromPDF(fileUrl, totalQuestions) {
     try {
-      console.log('📄 Attempting to extract questions from PDF...');
+      console.log('📄 Attempting to extract questions from PDF using pdf.js...');
       
+      // Fetch the PDF file
       const response = await fetch(fileUrl);
-      const blob = await response.blob();
+      const arrayBuffer = await response.arrayBuffer();
       
-      try {
-        const text = await blob.text();
+      // Load the PDF
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      console.log(`📄 PDF loaded: ${pdf.numPages} pages`);
+      
+      let fullText = '';
+      
+      // Extract text from all pages
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const textContent = await page.getTextContent();
+        const pageText = textContent.items.map(item => item.str).join(' ');
+        fullText += pageText + '\n';
+      }
+      
+      console.log('📝 Extracted text length:', fullText.length);
+      
+      if (fullText.length < 50) {
+        console.log('⚠️ Not enough text extracted');
+        return null;
+      }
+      
+      // Parse the text to find questions
+      const questions = [];
+      const lines = fullText.split('\n');
+      
+      let currentQuestion = null;
+      let currentOptions = [];
+      let foundQuestions = false;
+      
+      // Patterns to match Q1, Q2, Q3, etc.
+      const questionPatterns = [
+        /^Q(\d+)[\.\)]\s*(.+)/i,
+        /^(\d+)[\.\)]\s*(.+)/,
+        /^Question\s*(\d+)[\.\)]\s*(.+)/i,
+      ];
+      
+      // Patterns to match A), B), C), D)
+      const optionPatterns = [
+        /^([A-D])[\.\)]\s*(.+)/,
+        /^([a-d])[\.\)]\s*(.+)/,
+      ];
+      
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        if (trimmed.length < 2) continue;
         
-        const questions = [];
-        const lines = text.split('\n');
+        let isQuestion = false;
+        let questionMatch = null;
         
-        let currentQuestion = null;
-        let currentOptions = [];
-        let foundQuestions = false;
+        // Check if line is a question
+        for (const pattern of questionPatterns) {
+          const match = trimmed.match(pattern);
+          if (match) {
+            questionMatch = match;
+            isQuestion = true;
+            foundQuestions = true;
+            break;
+          }
+        }
         
-        const questionPatterns = [
-          /^Q(\d+)[\.\)]\s*(.+)/i,
-          /^(\d+)[\.\)]\s*(.+)/,
-          /^Question\s*(\d+)[\.\)]\s*(.+)/i,
-        ];
-        
-        const optionPatterns = [
-          /^([A-D])[\.\)]\s*(.+)/,
-          /^([a-d])[\.\)]\s*(.+)/,
-        ];
-        
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed) continue;
+        if (isQuestion && questionMatch) {
+          // Save previous question
+          if (currentQuestion && currentOptions.length > 0) {
+            questions.push({
+              text: currentQuestion,
+              options: currentOptions.slice(0, 4)
+            });
+          }
+          // Start new question
+          currentQuestion = (questionMatch[2] || questionMatch[1] || trimmed).trim();
+          currentOptions = [];
+        } else {
+          // Check if line is an option
+          let isOption = false;
+          let optionMatch = null;
           
-          let isQuestion = false;
-          let questionMatch = null;
-          
-          for (const pattern of questionPatterns) {
+          for (const pattern of optionPatterns) {
             const match = trimmed.match(pattern);
             if (match) {
-              questionMatch = match;
-              isQuestion = true;
-              foundQuestions = true;
+              optionMatch = match;
+              isOption = true;
               break;
             }
           }
           
-          if (isQuestion && questionMatch) {
-            if (currentQuestion && currentOptions.length > 0) {
-              questions.push({
-                text: currentQuestion,
-                options: currentOptions.slice(0, 4)
-              });
+          if (isOption && optionMatch && currentQuestion) {
+            const optionText = (optionMatch[2] || optionMatch[1] || trimmed).trim();
+            if (optionText.length > 1) {
+              currentOptions.push(optionText);
             }
-            currentQuestion = (questionMatch[2] || questionMatch[1] || trimmed).trim();
-            currentOptions = [];
-          } else {
-            let isOption = false;
-            let optionMatch = null;
-            
-            for (const pattern of optionPatterns) {
-              const match = trimmed.match(pattern);
-              if (match) {
-                optionMatch = match;
-                isOption = true;
-                break;
-              }
-            }
-            
-            if (isOption && optionMatch && currentQuestion) {
-              const optionText = (optionMatch[2] || optionMatch[1] || trimmed).trim();
-              if (optionText.length > 1) {
-                currentOptions.push(optionText);
-              }
-            } else if (currentQuestion && currentOptions.length > 0) {
-              const lastIndex = currentOptions.length - 1;
-              currentOptions[lastIndex] = currentOptions[lastIndex] + ' ' + trimmed;
-            } else if (currentQuestion) {
-              currentQuestion = currentQuestion + ' ' + trimmed;
-            }
+          } else if (currentQuestion && currentOptions.length > 0) {
+            // Continue previous option (multi-line option)
+            const lastIndex = currentOptions.length - 1;
+            currentOptions[lastIndex] = currentOptions[lastIndex] + ' ' + trimmed;
+          } else if (currentQuestion) {
+            // Continue question text (multi-line question)
+            currentQuestion = currentQuestion + ' ' + trimmed;
           }
         }
-        
-        if (currentQuestion && currentOptions.length > 0) {
-          questions.push({
-            text: currentQuestion,
-            options: currentOptions.slice(0, 4)
-          });
-        }
-        
-        if (questions.length > 0) {
-          console.log(`✅ Extracted ${questions.length} questions from PDF`);
-          return questions.slice(0, totalQuestions || questions.length);
-        }
-      } catch (textError) {
-        console.error('Error reading PDF text:', textError);
+      }
+      
+      // Save last question
+      if (currentQuestion && currentOptions.length > 0) {
+        questions.push({
+          text: currentQuestion,
+          options: currentOptions.slice(0, 4)
+        });
+      }
+      
+      console.log(`✅ Found ${questions.length} questions`);
+      
+      if (questions.length > 0) {
+        return questions.slice(0, totalQuestions || questions.length);
       }
       
       return null;
@@ -1620,6 +1651,68 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
       console.error('Error extracting questions from PDF:', error);
       return null;
     }
+  }
+
+  // Fallback: Create sample questions if extraction fails
+  function createSampleQuestions(count) {
+    const sampleQuestions = [
+      {
+        text: "What is the primary purpose of a Security Operations Center (SOC)?",
+        options: [
+          "To monitor and detect security threats",
+          "To manage employee payroll",
+          "To design computer hardware",
+          "To develop mobile applications"
+        ]
+      },
+      {
+        text: "Which of the following is a key component of incident response?",
+        options: [
+          "Detection and analysis",
+          "Marketing strategy",
+          "Product development",
+          "Customer support"
+        ]
+      },
+      {
+        text: "What does SIEM stand for?",
+        options: [
+          "Security Information and Event Management",
+          "System Integration and Enterprise Management",
+          "Secure Internet and Email Management",
+          "Standardized Information and Event Monitoring"
+        ]
+      },
+      {
+        text: "Which type of threat intelligence focuses on tactical indicators like IP addresses and domains?",
+        options: [
+          "Technical Threat Intelligence",
+          "Strategic Threat Intelligence",
+          "Operational Threat Intelligence",
+          "Tactical Threat Intelligence"
+        ]
+      },
+      {
+        text: "What is the main goal of a vulnerability assessment?",
+        options: [
+          "To identify and classify vulnerabilities",
+          "To exploit vulnerabilities",
+          "To fix all vulnerabilities immediately",
+          "To ignore low-risk vulnerabilities"
+        ]
+      }
+    ];
+    
+    const result = [];
+    for (let i = 0; i < Math.min(count, sampleQuestions.length); i++) {
+      result.push({
+        id: i,
+        text: sampleQuestions[i].text,
+        options: sampleQuestions[i].options,
+        correctAnswer: 0
+      });
+    }
+    return result;
   }
 
   async function beginExam() {
@@ -1654,69 +1747,50 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
         }));
         setQuestions(parsedQuestions);
         showToast(`✅ Loaded ${parsedQuestions.length} questions`, "success");
-      } else {
-        // Try to extract from PDF
-        const fileUrl = exam.fileData || examPdfUrls[exam.id];
+        setIsLoading(false);
+        return;
+      }
+      
+      // Try to extract from PDF
+      const fileUrl = exam.fileData || examPdfUrls[exam.id];
+      
+      if (fileUrl) {
+        const extractedQuestions = await extractQuestionsFromPDF(fileUrl, exam.totalQuestions);
         
-        if (fileUrl) {
-          const extractedQuestions = await extractQuestionsFromPDF(fileUrl, exam.totalQuestions);
+        if (extractedQuestions && extractedQuestions.length > 0) {
+          setQuestions(extractedQuestions);
+          showToast(`✅ Extracted ${extractedQuestions.length} questions from PDF`, "success");
           
-          if (extractedQuestions && extractedQuestions.length > 0) {
-            setQuestions(extractedQuestions);
-            showToast(`✅ Extracted ${extractedQuestions.length} questions`, "success");
-            
-            // Save to database
-            try {
-              const questionsToSave = extractedQuestions.map((q, index) => ({
-                exam_id: exam.id,
-                question_number: index + 1,
-                question_text: q.text,
-                options: q.options || ['A', 'B', 'C', 'D'],
-                correct_answer: exam.correctAnswers ? exam.correctAnswers[index] || 0 : 0
-              }));
-              await supabase.from('exam_questions').insert(questionsToSave);
-            } catch (saveError) {
-              console.error('Error saving questions:', saveError);
-            }
-          } else {
-            // Fallback
-            const defaultQuestions = [];
-            for (let i = 0; i < exam.totalQuestions; i++) {
-              defaultQuestions.push({
-                id: i,
-                text: `Question ${i + 1}`,
-                options: ['A', 'B', 'C', 'D'],
-                correctAnswer: exam.correctAnswers ? exam.correctAnswers[i] || 0 : 0
-              });
-            }
-            setQuestions(defaultQuestions);
-            showToast("📄 Using default questions", "info");
+          // Save to database for future use
+          try {
+            const questionsToSave = extractedQuestions.map((q, index) => ({
+              exam_id: exam.id,
+              question_number: index + 1,
+              question_text: q.text,
+              options: q.options || ['A', 'B', 'C', 'D'],
+              correct_answer: exam.correctAnswers ? exam.correctAnswers[index] || 0 : 0
+            }));
+            await supabase.from('exam_questions').insert(questionsToSave);
+            console.log('✅ Questions saved to database');
+          } catch (saveError) {
+            console.error('Error saving questions:', saveError);
           }
         } else {
-          const defaultQuestions = [];
-          for (let i = 0; i < exam.totalQuestions; i++) {
-            defaultQuestions.push({
-              id: i,
-              text: `Question ${i + 1}`,
-              options: ['A', 'B', 'C', 'D'],
-              correctAnswer: exam.correctAnswers ? exam.correctAnswers[i] || 0 : 0
-            });
-          }
-          setQuestions(defaultQuestions);
+          // Extraction failed - use sample questions
+          const sampleQuestions = createSampleQuestions(exam.totalQuestions || 10);
+          setQuestions(sampleQuestions);
+          showToast("📄 Using sample questions (PDF extraction failed)", "info");
         }
+      } else {
+        // No PDF - use sample questions
+        const sampleQuestions = createSampleQuestions(exam.totalQuestions || 10);
+        setQuestions(sampleQuestions);
+        showToast("📄 Using sample questions", "info");
       }
     } catch (error) {
       console.error("Error loading questions:", error);
-      const defaultQuestions = [];
-      for (let i = 0; i < exam.totalQuestions; i++) {
-        defaultQuestions.push({
-          id: i,
-          text: `Question ${i + 1}`,
-          options: ['A', 'B', 'C', 'D'],
-          correctAnswer: exam.correctAnswers ? exam.correctAnswers[i] || 0 : 0
-        });
-      }
-      setQuestions(defaultQuestions);
+      const sampleQuestions = createSampleQuestions(exam.totalQuestions || 10);
+      setQuestions(sampleQuestions);
     } finally {
       setIsLoading(false);
     }
@@ -1731,7 +1805,14 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
     let score = 0;
     const questionResults = [];
     
-    for (let i = 0; i < exam.totalQuestions; i++) {
+    const currentQuestions = questions.length > 0 ? questions : 
+      Array.from({ length: exam.totalQuestions }, (_, i) => ({
+        id: i,
+        text: `Question ${i + 1}`,
+        options: ['A', 'B', 'C', 'D']
+      }));
+    
+    for (let i = 0; i < currentQuestions.length; i++) {
       const correctAns = exam.correctAnswers ? exam.correctAnswers[i] : 0;
       const isCorrect = answers[i] === correctAns;
       if (isCorrect) score += 1;
@@ -1750,7 +1831,7 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
       studentId: currentUser.id, 
       studentName: currentUser.name, 
       score, 
-      total: exam.totalQuestions, 
+      total: currentQuestions.length, 
       submittedAt: new Date().toISOString(),
       questionResults: questionResults
     };
@@ -1762,7 +1843,7 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
     setShowConfirmFinish(false);
     setShowReview(true);
     setReviewIndex(0);
-    showToast(`Submitted! Score: ${score}/${exam.totalQuestions}`);
+    showToast(`Submitted! Score: ${score}/${currentQuestions.length}`);
   }
 
   function finishExam() {
@@ -1787,7 +1868,7 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
   if (showReview && finished) {
     const pct = Math.round((finished.score / finished.total) * 100);
     const currentQuestions = questions.length > 0 ? questions : 
-      Array.from({ length: exam.totalQuestions }, (_, i) => ({
+      Array.from({ length: finished.total }, (_, i) => ({
         id: i,
         text: `Question ${i + 1}`,
         options: ['A', 'B', 'C', 'D']
@@ -2008,7 +2089,7 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
           ))}
         </div>
 
-        {/* QUESTION - Displayed inline, NO PDF viewer */}
+        {/* QUESTION - Displayed inline */}
         <div className="card" style={{ maxWidth: 800, margin: "0 auto" }}>
           <div style={{ fontWeight: 600, marginBottom: 12, fontSize: 18 }}>
             Question {qIndex + 1}
