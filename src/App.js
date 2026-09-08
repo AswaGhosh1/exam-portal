@@ -8,6 +8,7 @@ import {
   Download
 } from "lucide-react";
 import * as pdfjsLib from 'pdfjs-dist';
+import mammoth from 'mammoth';
 
 /* ---------------------------------- helpers ---------------------------------- */
 
@@ -1489,587 +1490,583 @@ async function notifyStudents(exam) {
 
 /* ---------------------------------- TakeExamTab ---------------------------------- */
 
-function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, showToast }) {
-  const [code, setCode] = useState("");
-  const [exam, setExam] = useState(null);
-  const [started, setStarted] = useState(false);
-  const [qIndex, setQIndex] = useState(0);
-  const [answers, setAnswers] = useState({});
-  const [secondsLeft, setSecondsLeft] = useState(0);
-  const [finished, setFinished] = useState(null);
-  const [showConfirmFinish, setShowConfirmFinish] = useState(false);
-  const [questions, setQuestions] = useState([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [showReview, setShowReview] = useState(false);
-  const [reviewIndex, setReviewIndex] = useState(0);
+function ExamsTab({ exams, setExams, students, notifications, setNotifications, examPdfUrls, setExamPdf, showToast }) {
+  const [creating, setCreating] = useState(false);
+  const [title, setTitle] = useState("");
+  const [subject, setSubject] = useState("");
+  const [date, setDate] = useState("");
+  const [time, setTime] = useState("");
+  const [duration, setDuration] = useState(30);
+  const [file, setFile] = useState(null);
+  const [fileType, setFileType] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+  const [extractedQuestions, setExtractedQuestions] = useState([]);
+  const [isExtracting, setIsExtracting] = useState(false);
+  const [totalQuestions, setTotalQuestions] = useState(10);
+  const [answerKey, setAnswerKey] = useState(Array(10).fill(0));
 
-  useEffect(() => {
-    if (!started || finished) return;
-    if (secondsLeft <= 0) { submitExam(); return; }
-    const t = setTimeout(() => setSecondsLeft((s) => s - 1), 1000);
-    return () => clearTimeout(t);
-  }, [secondsLeft, started, finished]);
-
-  function findExam() {
-    const found = exams.find((e) => e.code.toUpperCase() === code.trim().toUpperCase());
-    if (!found) { 
-      showToast("No exam found with that code.", "error"); 
-      return; 
-    }
-    setExam(found);
-    setQuestions([]);
-    setShowReview(false);
+  function changeTotalQuestions(val) {
+    const n = Math.max(1, Math.min(200, Number(val) || 1));
+    setTotalQuestions(n);
+    setAnswerKey((prev) => {
+      const next = prev.slice(0, n);
+      while (next.length < n) next.push(0);
+      return next;
+    });
   }
 
-  async function beginExam() {
-    const already = results.find((r) => r.examId === exam.id && r.studentId === currentUser.id);
-    if (already) { 
-      setFinished(already); 
-      setShowReview(true);
-      return; 
-    }
-    
-    setAnswers({}); 
-    setQIndex(0); 
-    setSecondsLeft(exam.durationMins * 60); 
-    setStarted(true);
-    setShowReview(false);
-    setIsLoading(true);
-    
+  function resetForm() {
+    setTitle(""); 
+    setSubject(""); 
+    setDate(""); 
+    setTime(""); 
+    setDuration(30);
+    setTotalQuestions(10);
+    setAnswerKey(Array(10).fill(0));
+    setFile(null); 
+    setFileType(""); 
+    setCreating(false);
+    setExtractedQuestions([]);
+  }
+
+  // Extract questions from PDF using pdf.js
+  async function extractFromPDF(fileData) {
     try {
-      // Load questions from Supabase
-      const { data: questionsData, error: questionsError } = await supabase
-        .from('exam_questions')
-        .select('*')
-        .eq('exam_id', exam.id)
-        .order('question_number');
+      console.log('📄 Extracting from PDF...');
+      const pdf = await pdfjsLib.getDocument({ data: fileData }).promise;
+      let fullText = '';
       
-      console.log('📝 Questions from DB:', questionsData);
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const textContent = await page.getTextContent();
+        const pageText = textContent.items.map(item => item.str).join(' ');
+        fullText += pageText + '\n';
+      }
       
-      if (questionsData && questionsData.length > 0) {
-        const parsedQuestions = questionsData.map(q => ({
-          id: q.question_number - 1,
-          text: q.question_text || `Question ${q.question_number}`,
-          options: q.options || ['A', 'B', 'C', 'D'],
-          correctAnswer: q.correct_answer || 0
-        }));
-        setQuestions(parsedQuestions);
-        showToast(`✅ Loaded ${parsedQuestions.length} questions`, "success");
-      } else {
-        // Create default questions with instructions to read from PDF
-        const defaultQuestions = [];
-        for (let i = 0; i < exam.totalQuestions; i++) {
-          defaultQuestions.push({
-            id: i,
-            text: `📄 Read Question ${i + 1} from the PDF viewer below`,
-            options: ['A', 'B', 'C', 'D'],
-            correctAnswer: exam.correctAnswers ? exam.correctAnswers[i] || 0 : 0
+      return parseQuestionsFromText(fullText);
+    } catch (error) {
+      console.error('PDF extraction error:', error);
+      return null;
+    }
+  }
+
+  // Extract questions from DOC using mammoth
+  async function extractFromDOC(fileData) {
+    try {
+      console.log('📄 Extracting from DOC...');
+      const result = await mammoth.extractRawText({ arrayBuffer: fileData });
+      return parseQuestionsFromText(result.value);
+    } catch (error) {
+      console.error('DOC extraction error:', error);
+      return null;
+    }
+  }
+
+  // Parse questions from extracted text
+  function parseQuestionsFromText(text) {
+    const questions = [];
+    const lines = text.split('\n');
+    
+    let currentQuestion = null;
+    let currentOptions = [];
+    let foundQuestions = false;
+    
+    // Patterns for questions
+    const questionPatterns = [
+      /^Q(\d+)[\.\)]\s*(.+)/i,
+      /^(\d+)[\.\)]\s*(.+)/,
+      /^Question\s*(\d+)[\.\)]\s*(.+)/i,
+    ];
+    
+    // Patterns for options
+    const optionPatterns = [
+      /^([A-D])[\.\)]\s*(.+)/,
+      /^([a-d])[\.\)]\s*(.+)/,
+      /^\(([A-D])\)\s*(.+)/,
+    ];
+    
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.length < 2) continue;
+      
+      let isQuestion = false;
+      let questionMatch = null;
+      
+      for (const pattern of questionPatterns) {
+        const match = trimmed.match(pattern);
+        if (match) {
+          questionMatch = match;
+          isQuestion = true;
+          foundQuestions = true;
+          break;
+        }
+      }
+      
+      if (isQuestion && questionMatch) {
+        if (currentQuestion && currentOptions.length > 0) {
+          questions.push({
+            text: currentQuestion,
+            options: currentOptions.slice(0, 4)
           });
         }
-        setQuestions(defaultQuestions);
-        showToast("📄 Please read questions from the PDF", "info");
+        currentQuestion = (questionMatch[2] || questionMatch[1] || trimmed).trim();
+        currentOptions = [];
+      } else {
+        let isOption = false;
+        let optionMatch = null;
+        
+        for (const pattern of optionPatterns) {
+          const match = trimmed.match(pattern);
+          if (match) {
+            optionMatch = match;
+            isOption = true;
+            break;
+          }
+        }
+        
+        if (isOption && optionMatch && currentQuestion) {
+          const optionText = (optionMatch[2] || optionMatch[1] || trimmed).trim();
+          if (optionText.length > 1) {
+            currentOptions.push(optionText);
+          }
+        } else if (currentQuestion && currentOptions.length > 0) {
+          const lastIndex = currentOptions.length - 1;
+          currentOptions[lastIndex] = currentOptions[lastIndex] + ' ' + trimmed;
+        } else if (currentQuestion) {
+          currentQuestion = currentQuestion + ' ' + trimmed;
+        }
       }
-    } catch (error) {
-      console.error("Error loading questions:", error);
-      const defaultQuestions = [];
-      for (let i = 0; i < exam.totalQuestions; i++) {
-        defaultQuestions.push({
-          id: i,
-          text: `Question ${i + 1}`,
-          options: ['A', 'B', 'C', 'D'],
-          correctAnswer: exam.correctAnswers ? exam.correctAnswers[i] || 0 : 0
-        });
-      }
-      setQuestions(defaultQuestions);
-    } finally {
-      setIsLoading(false);
     }
-  }
-
-  function selectAnswer(oi) { 
-    setAnswers({ ...answers, [qIndex]: oi }); 
-  }
-
-  function submitExam() {
-    if (finished) return;
-    let score = 0;
-    const questionResults = [];
     
-    const currentQuestions = questions.length > 0 ? questions : 
-      Array.from({ length: exam.totalQuestions }, (_, i) => ({
-        id: i,
-        text: `Question ${i + 1}`,
-        options: ['A', 'B', 'C', 'D']
-      }));
-    
-    for (let i = 0; i < currentQuestions.length; i++) {
-      const correctAns = exam.correctAnswers ? exam.correctAnswers[i] : 0;
-      const isCorrect = answers[i] === correctAns;
-      if (isCorrect) score += 1;
-      questionResults.push({
-        questionIndex: i,
-        userAnswer: answers[i] !== undefined ? answers[i] : null,
-        correctAnswer: correctAns,
-        isCorrect: isCorrect
+    if (currentQuestion && currentOptions.length > 0) {
+      questions.push({
+        text: currentQuestion,
+        options: currentOptions.slice(0, 4)
       });
     }
     
-    const rec = { 
+    console.log(`✅ Found ${questions.length} questions`);
+    return questions;
+  }
+
+  // Handle file upload and extraction
+  async function handleFileUpload(file) {
+    setIsExtracting(true);
+    setExtractedQuestions([]);
+    
+    try {
+      const fileExtension = file.name.split('.').pop().toLowerCase();
+      
+      if (!['pdf', 'doc', 'docx'].includes(fileExtension)) {
+        showToast("Please upload a PDF or DOC file.", "error");
+        setIsExtracting(false);
+        return;
+      }
+      
+      setFile(file);
+      setFileType(fileExtension);
+      
+      const arrayBuffer = await file.arrayBuffer();
+      let extracted = null;
+      
+      if (fileExtension === 'pdf') {
+        extracted = await extractFromPDF(arrayBuffer);
+      } else {
+        extracted = await extractFromDOC(arrayBuffer);
+      }
+      
+      if (extracted && extracted.length > 0) {
+        setExtractedQuestions(extracted);
+        setTotalQuestions(extracted.length);
+        setAnswerKey(Array(extracted.length).fill(0));
+        showToast(`✅ Extracted ${extracted.length} questions from ${file.name}`, "success");
+      } else {
+        showToast("No questions found in the file. Please check the format.", "error");
+      }
+    } catch (error) {
+      console.error('File processing error:', error);
+      showToast("Error processing file: " + error.message, "error");
+    } finally {
+      setIsExtracting(false);
+    }
+  }
+
+  async function saveExam() {
+    if (!title.trim() || !date || !time) { 
+      showToast("Fill in the title, date and time.", "error"); 
+      return; 
+    }
+    
+    if (!file) { 
+      showToast("Upload a question paper (PDF or DOC).", "error"); 
+      return; 
+    }
+    
+    if (extractedQuestions.length === 0) {
+      showToast("No questions extracted. Please upload a valid file.", "error");
+      return;
+    }
+    
+    setIsSaving(true);
+    
+    try {
+      const id = uid();
+      const scheduledAt = new Date(`${date}T${time}`).toISOString();
+      
+      // Convert file to base64 for storage
+      const fileData = await new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (e) => resolve(e.target.result);
+        reader.readAsDataURL(file);
+      });
+      
+      const rec = {
+        id: id,
+        code: genCode(),
+        title: title.trim(),
+        subject: subject.trim() || 'General',
+        scheduledAt: scheduledAt,
+        durationMins: Number(duration) || 30,
+        totalQuestions: extractedQuestions.length,
+        correctAnswers: answerKey,
+        fileName: file.name,
+        fileType: fileType,
+        fileData: fileData,
+        notified: false,
+        createdAt: new Date().toISOString()
+      };
+      
+      // Save exam to Supabase
+      const { data, error } = await supabase
+        .from('exams')
+        .insert([rec])
+        .select();
+      
+      if (error) {
+        console.error('Database error:', error);
+        showToast('Failed to save exam: ' + error.message, 'error');
+        setIsSaving(false);
+        return;
+      }
+      
+      // Save questions to Supabase
+      const questionsData = extractedQuestions.map((q, index) => ({
+        exam_id: id,
+        question_number: index + 1,
+        question_text: q.text,
+        options: q.options || ['A', 'B', 'C', 'D'],
+        correct_answer: answerKey[index] || 0
+      }));
+      
+      const { error: questionError } = await supabase
+        .from('exam_questions')
+        .insert(questionsData);
+      
+      if (questionError) {
+        console.error('Question save error:', questionError);
+        showToast('Warning: Questions saved but error occurred.', 'error');
+      } else {
+        console.log(`✅ ${questionsData.length} questions saved to database`);
+      }
+      
+      // Save to localStorage
+      const updatedExams = [...exams, rec];
+      setExams(updatedExams);
+      await saveKey(STORAGE_KEYS.exams, updatedExams);
+      
+      setExamPdf(id, fileData);
+      resetForm();
+      showToast(`✅ "${rec.title}" scheduled! ${questionsData.length} questions saved. Code: ${rec.code}`);
+    } catch (error) {
+      console.error('Error saving exam:', error);
+      showToast('Failed to save exam: ' + error.message, 'error');
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function removeExam(id) { 
+    try {
+      const { error } = await supabase
+        .from('exams')
+        .delete()
+        .eq('id', id);
+      
+      if (error) throw error;
+      
+      const updated = exams.filter((e) => e.id !== id);
+      setExams(updated);
+      saveKey(STORAGE_KEYS.exams, updated);
+      showToast("Exam removed.");
+    } catch (error) {
+      console.error('Error removing exam:', error);
+      showToast('Failed to remove exam.', 'error');
+    }
+  }
+
+  async function notifyStudents(exam) {
+    if (students.length === 0) { 
+      showToast("Add students first — there's no one to notify yet.", "error"); 
+      return; 
+    }
+    
+    const link = `https://your-school-domain.com/exam/${exam.code}`;
+    const entries = students.map((s) => ({ 
       id: uid(), 
       examId: exam.id, 
       examTitle: exam.title, 
-      studentId: currentUser.id, 
-      studentName: currentUser.name, 
-      score, 
-      total: currentQuestions.length, 
-      submittedAt: new Date().toISOString(),
-      questionResults: questionResults
-    };
-    const updated = [...results, rec];
-    setResults(updated);
-    saveKey(STORAGE_KEYS.results, updated);
-    setFinished(rec); 
-    setStarted(false);
-    setShowConfirmFinish(false);
-    setShowReview(true);
-    setReviewIndex(0);
-    showToast(`Submitted! Score: ${score}/${currentQuestions.length}`);
-  }
-
-  function finishExam() {
-    setShowConfirmFinish(true);
-  }
-
-  function resetAll() { 
-    setCode(""); 
-    setExam(null); 
-    setStarted(false); 
-    setQIndex(0); 
-    setAnswers({}); 
-    setSecondsLeft(0); 
-    setFinished(null); 
-    setShowConfirmFinish(false);
-    setQuestions([]);
-    setShowReview(false);
-    setReviewIndex(0);
-  }
-
-  // Review mode
-  if (showReview && finished) {
-    const pct = Math.round((finished.score / finished.total) * 100);
-    const currentQuestions = questions.length > 0 ? questions : 
-      Array.from({ length: finished.total }, (_, i) => ({
-        id: i,
-        text: `Question ${i + 1}`,
-        options: ['A', 'B', 'C', 'D']
-      }));
+      studentName: s.name, 
+      email: s.email || s.username + '@example.com', 
+      phone: s.phone, 
+      link, 
+      sentAt: new Date().toISOString() 
+    }));
     
-    const currentReview = finished.questionResults ? finished.questionResults[reviewIndex] : null;
-    const currentQuestion = currentQuestions[reviewIndex] || currentQuestions[0];
-
-    return (
-      <div>
-        <div className="page-title font-display">Exam Review</div>
-        <div className="page-sub">Review your answers and see correct/incorrect responses.</div>
-
-        <div className="card" style={{ marginBottom: 20, textAlign: "center", background: pct >= 60 ? "rgba(63,122,93,0.08)" : "rgba(178,58,72,0.08)" }}>
-          <div style={{ display: "flex", justifyContent: "center", gap: 40, alignItems: "center", flexWrap: "wrap" }}>
-            <div>
-              <div style={{ fontSize: 14, color: "var(--muted)" }}>Your Score</div>
-              <div className="font-display" style={{ fontSize: 36, fontWeight: 700, color: "var(--primary)" }}>{finished.score} / {finished.total}</div>
-            </div>
-            <div>
-              <div style={{ fontSize: 14, color: "var(--muted)" }}>Percentage</div>
-              <div className={`pill ${pct >= 60 ? "pill-green" : pct >= 40 ? "pill-gold" : "pill-red"}`} style={{ fontSize: 20, padding: "6px 20px" }}>{pct}%</div>
-            </div>
-            <div>
-              <div style={{ fontSize: 14, color: "var(--muted)" }}>Status</div>
-              <div style={{ fontSize: 18, fontWeight: 600, color: pct >= 60 ? "var(--success)" : pct >= 40 ? "var(--accent)" : "var(--danger)" }}>
-                {pct >= 60 ? "✅ Passed" : pct >= 40 ? "⚠️ Average" : "❌ Failed"}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
-          <span style={{ fontWeight: 600, fontSize: 14 }}>Question {reviewIndex + 1} of {finished.total}</span>
-          <div style={{ display: "flex", gap: 6, flex: 1 }}>
-            {Array.from({ length: finished.total }).map((_, i) => {
-              const result = finished.questionResults ? finished.questionResults[i] : null;
-              const isCorrect = result ? result.isCorrect : false;
-              const isAnswered = result ? result.userAnswer !== undefined : false;
-              return (
-                <div 
-                  key={i} 
-                  className={`q-dot ${i === reviewIndex ? "current" : ""} ${isAnswered ? (isCorrect ? "answered" : "pill-red") : ""}`}
-                  style={{ 
-                    cursor: "pointer",
-                    ...(isAnswered && !isCorrect ? { background: "var(--danger)", color: "#fff", borderColor: "var(--danger)" } : {})
-                  }}
-                  onClick={() => setReviewIndex(i)}
-                >
-                  {i + 1}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        <div className="card" style={{ maxWidth: 800, margin: "0 auto" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-            <div style={{ fontWeight: 600, fontSize: 16 }}>
-              Question {reviewIndex + 1}
-              {currentReview && currentReview.isCorrect !== undefined && (
-                <span style={{ marginLeft: 12, fontSize: 14 }}>
-                  {currentReview.isCorrect ? (
-                    <span style={{ color: "var(--success)" }}>✅ Correct</span>
-                  ) : (
-                    <span style={{ color: "var(--danger)" }}>❌ Wrong</span>
-                  )}
-                </span>
-              )}
-            </div>
-          </div>
-          
-          <div style={{ 
-            marginBottom: 16, 
-            padding: 16, 
-            background: "var(--paper)", 
-            borderRadius: 8,
-            fontSize: 17,
-            lineHeight: 1.8
-          }}>
-            {currentQuestion.text || `Question ${reviewIndex + 1}`}
-          </div>
-          
-          <div style={{ fontWeight: 600, marginBottom: 12, fontSize: 14, color: "var(--muted)" }}>Your Answer:</div>
-          {currentQuestion.options && currentQuestion.options.length > 0 ? (
-            currentQuestion.options.map((option, oi) => {
-              const letter = LETTERS[oi] || String.fromCharCode(65 + oi);
-              const isSelected = currentReview ? currentReview.userAnswer === oi : false;
-              const isCorrect = currentReview ? currentReview.correctAnswer === oi : false;
-              let bgColor = "transparent";
-              let borderColor = "var(--line)";
-              
-              if (isSelected && isCorrect) {
-                bgColor = "rgba(63,122,93,0.15)";
-                borderColor = "var(--success)";
-              } else if (isSelected && !isCorrect) {
-                bgColor = "rgba(178,58,72,0.15)";
-                borderColor = "var(--danger)";
-              } else if (!isSelected && isCorrect) {
-                bgColor = "rgba(63,122,93,0.08)";
-                borderColor = "var(--success)";
-              }
-              
-              return (
-                <div key={oi} className="option-row" style={{ 
-                  background: bgColor,
-                  borderColor: borderColor,
-                  borderWidth: borderColor !== "var(--line)" ? 2 : 1,
-                  cursor: "default"
-                }}>
-                  <div className="option-letter" style={{ 
-                    background: isSelected ? "var(--primary)" : "transparent",
-                    color: isSelected ? "#fff" : "var(--muted)",
-                    borderColor: borderColor
-                  }}>{letter}</div>
-                  <div style={{ fontSize: 15, flex: 1 }}>{option}</div>
-                  {isSelected && isCorrect && <Check size={18} color="var(--success)" style={{ marginLeft: "auto" }} />}
-                  {isSelected && !isCorrect && <X size={18} color="var(--danger)" style={{ marginLeft: "auto" }} />}
-                  {!isSelected && isCorrect && <Check size={18} color="var(--success)" style={{ marginLeft: "auto" }} />}
-                  {isSelected && <span style={{ marginLeft: 8, fontSize: 12, color: isCorrect ? "var(--success)" : "var(--danger)" }}>
-                    {isCorrect ? "(Correct)" : "(Your Answer)"}
-                  </span>}
-                  {!isSelected && isCorrect && <span style={{ marginLeft: 8, fontSize: 12, color: "var(--success)" }}>(Correct Answer)</span>}
-                </div>
-              );
-            })
-          ) : (
-            LETTERS.map((l, oi) => (
-              <div key={oi} className="option-row" style={{ 
-                background: currentReview && currentReview.userAnswer === oi ? "rgba(63,122,93,0.1)" : "transparent"
-              }}>
-                <div className="option-letter">{l}</div>
-                <div style={{ fontSize: 15, flex: 1 }}>Option {l}</div>
-              </div>
-            ))
-          )}
-        </div>
-
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 16 }}>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button className="btn btn-outline" disabled={reviewIndex === 0} onClick={() => setReviewIndex(reviewIndex - 1)}>
-              <ChevronLeft size={15} /> Previous
-            </button>
-            <button className="btn btn-outline" disabled={reviewIndex === finished.total - 1} onClick={() => setReviewIndex(reviewIndex + 1)}>
-              Next <ChevronRight size={15} />
-            </button>
-          </div>
-          <div>
-            <button className="btn btn-primary" onClick={resetAll}>
-              <CheckCircle2 size={15} /> Take Another Exam
-            </button>
-          </div>
-        </div>
-      </div>
-    );
+    try {
+      const { error } = await supabase
+        .from('exams')
+        .update({ notified: true })
+        .eq('id', exam.id);
+      
+      if (error) throw error;
+      
+      const updated = [...notifications, ...entries];
+      setNotifications(updated);
+      saveKey(STORAGE_KEYS.notifications, updated);
+      
+      const updatedExams = exams.map((e) => (e.id === exam.id ? { ...e, notified: true } : e));
+      setExams(updatedExams);
+      saveKey(STORAGE_KEYS.exams, updatedExams);
+      
+      showToast(`Simulated email + SMS sent to ${students.length} student(s).`);
+    } catch (error) {
+      console.error('Error notifying students:', error);
+      showToast('Failed to notify students.', 'error');
+    }
   }
 
-  if (finished) {
-    const pct = Math.round((finished.score / finished.total) * 100);
-    return (
-      <div>
-        <div className="page-title font-display">Take Exam</div>
-        <div className="page-sub">Result summary</div>
-        <div className="card" style={{ maxWidth: 460 }}>
-          <div style={{ textAlign: "center", padding: "10px 0" }}>
-            <Award size={40} color="var(--accent)" style={{ marginBottom: 10 }} />
-            <div style={{ fontSize: 15, color: "var(--muted)" }}>{finished.examTitle}</div>
-            <div className="font-display" style={{ fontSize: 40, fontWeight: 700, color: "var(--primary)", margin: "6px 0" }}>{finished.score} / {finished.total}</div>
-            <div className="pill pill-gold">{pct}% score</div>
-            <div style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 10 }}>Submitted {fmtDateTime(finished.submittedAt)}</div>
-          </div>
-        </div>
-        <button className="btn btn-outline" style={{ marginTop: 16 }} onClick={resetAll}>Take another exam</button>
-        <button className="btn btn-primary" style={{ marginTop: 16, marginLeft: 10 }} onClick={() => setShowReview(true)}>
-          <BookOpen size={15} /> Review Answers
-        </button>
-      </div>
-    );
+  function copyLink(exam) {
+    const link = `https://your-school-domain.com/exam/${exam.code}`;
+    if (navigator.clipboard) navigator.clipboard.writeText(link).catch(() => {});
+    showToast("Exam link copied.");
   }
 
-  // MAIN EXAM VIEW - Display questions
-  if (started && exam) {
-    const isLast = qIndex === exam.totalQuestions - 1;
-    const mm = Math.floor(secondsLeft / 60);
-    const ss = secondsLeft % 60;
-    const low = secondsLeft <= 30;
-    const totalAnswered = Object.keys(answers).length;
-    
-    const currentQuestions = questions.length > 0 ? questions : 
-      Array.from({ length: exam.totalQuestions }, (_, i) => ({
-        id: i,
-        text: `Question ${i + 1}`,
-        options: ['A', 'B', 'C', 'D']
-      }));
-
-    const currentQuestion = currentQuestions[qIndex] || currentQuestions[0];
-
-    return (
-      <div>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-          <div>
-            <div className="page-title font-display" style={{ marginBottom: 0 }}>{exam.title}</div>
-            <div className="page-sub" style={{ marginBottom: 0 }}>
-              Question {qIndex + 1} of {exam.totalQuestions} 
-              <span style={{ marginLeft: 12, color: "var(--muted)" }}>
-                • Answered: {totalAnswered}/{exam.totalQuestions}
-              </span>
-              {isLoading && <span style={{ marginLeft: 12, color: "var(--accent)" }}>⏳ Loading questions...</span>}
-            </div>
-          </div>
-          <div className={`timer-badge ${low ? "low" : ""}`}><Timer size={16} /> {pad(mm)}:{pad(ss)}</div>
-        </div>
-
-        {/* Question Progress Dots */}
-        <div className="q-progress">
-          {Array.from({ length: exam.totalQuestions }).map((_, i) => (
-            <div key={i} className={`q-dot ${i === qIndex ? "current" : answers[i] !== undefined ? "answered" : ""}`} onClick={() => setQIndex(i)}>{i + 1}</div>
-          ))}
-        </div>
-
-        {/* QUESTION - Displayed inline */}
-        <div className="card" style={{ maxWidth: 800, margin: "0 auto" }}>
-          <div style={{ fontWeight: 600, marginBottom: 12, fontSize: 18 }}>
-            Question {qIndex + 1}
-            {answers[qIndex] !== undefined && (
-              <span style={{ marginLeft: 8, fontSize: 14, color: "var(--success)" }}>
-                ✓ Answered
-              </span>
-            )}
-          </div>
-          
-          {/* Question Text */}
-          <div style={{ 
-            marginBottom: 20, 
-            padding: 16, 
-            background: "var(--paper)", 
-            borderRadius: 8,
-            fontSize: 16,
-            lineHeight: 1.8,
-            minHeight: 60
-          }}>
-            {currentQuestion.text || `Question ${qIndex + 1}`}
-          </div>
-          
-          {/* Options */}
-          <div style={{ fontWeight: 600, marginBottom: 12, fontSize: 14, color: "var(--muted)" }}>Select your answer:</div>
-          {currentQuestion.options && currentQuestion.options.length > 0 ? (
-            currentQuestion.options.map((option, oi) => {
-              const letter = LETTERS[oi] || String.fromCharCode(65 + oi);
-              return (
-                <div key={oi} className={`option-row ${answers[qIndex] === oi ? "selected" : ""}`} onClick={() => selectAnswer(oi)} style={{ padding: "14px 16px" }}>
-                  <div className="option-letter" style={{ width: 30, height: 30, fontSize: 14 }}>{letter}</div>
-                  <div style={{ fontSize: 15, flex: 1 }}>{option}</div>
-                  {answers[qIndex] === oi && <Check size={20} color="var(--success)" style={{ marginLeft: "auto" }} />}
-                </div>
-              );
-            })
-          ) : (
-            LETTERS.slice(0, 4).map((l, oi) => (
-              <div key={oi} className={`option-row ${answers[qIndex] === oi ? "selected" : ""}`} onClick={() => selectAnswer(oi)} style={{ padding: "14px 16px" }}>
-                <div className="option-letter" style={{ width: 30, height: 30, fontSize: 14 }}>{l}</div>
-                <div style={{ fontSize: 15, flex: 1 }}>Option {l}</div>
-                {answers[qIndex] === oi && <Check size={20} color="var(--success)" style={{ marginLeft: "auto" }} />}
-              </div>
-            ))
-          )}
-
-          <div style={{ marginTop: 16, fontSize: 12, color: "var(--muted)", textAlign: "center" }}>
-            {qIndex + 1} of {exam.totalQuestions} questions
-            {questions.length > 0 && ` • ${questions.length} questions loaded`}
-          </div>
-        </div>
-
-        {/* Navigation Buttons */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 16 }}>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button className="btn btn-outline" disabled={qIndex === 0} onClick={() => setQIndex(qIndex - 1)}>
-              <ChevronLeft size={15} /> Previous
-            </button>
-            {!isLast ? (
-              <button className="btn btn-primary" onClick={() => setQIndex(qIndex + 1)}>
-                Next <ChevronRight size={15} />
-              </button>
-            ) : (
-              <button className="btn btn-primary" disabled>
-                Last Question <ChevronRight size={15} />
-              </button>
-            )}
-          </div>
-          <div>
-            <button 
-              className="btn btn-danger" 
-              onClick={finishExam}
-              style={{ background: "var(--danger)", color: "#fff" }}
-            >
-              <CheckCircle2 size={15} /> Finish Exam
-            </button>
-          </div>
-        </div>
-
-        {/* Confirmation Dialog */}
-        {showConfirmFinish && (
-          <div style={{
-            position: "fixed",
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: "rgba(0,0,0,0.5)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 1000
-          }}>
-            <div className="card" style={{ maxWidth: 400, margin: "20px" }}>
-              <div style={{ textAlign: "center", marginBottom: 16 }}>
-                <AlertTriangle size={40} color="var(--accent)" />
-                <h3 style={{ marginTop: 10 }}>Finish Exam?</h3>
-                <p style={{ color: "var(--muted)", fontSize: 14 }}>
-                  You've answered {totalAnswered} out of {exam.totalQuestions} questions.
-                  {totalAnswered < exam.totalQuestions && (
-                    <span style={{ color: "var(--danger)", display: "block", marginTop: 8 }}>
-                      ⚠️ You have {exam.totalQuestions - totalAnswered} unanswered questions!
-                    </span>
-                  )}
-                </p>
-              </div>
-              <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
-                <button className="btn btn-outline" onClick={() => setShowConfirmFinish(false)}>
-                  Continue Exam
-                </button>
-                <button className="btn btn-danger" onClick={submitExam} style={{ background: "var(--danger)", color: "#fff" }}>
-                  <CheckCircle2 size={15} /> Submit & Finish
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-    );
+  function previewFile(exam) {
+    const url = examPdfUrls[exam.id] || exam.fileData || exam.fileUrl;
+    if (!url) { 
+      showToast("This file isn't available.", "error"); 
+      return; 
+    }
+    window.open(url, "_blank");
   }
 
-  // INITIAL EXAM SEARCH VIEW
+  function getFileIcon(fileType) {
+    if (fileType === 'pdf') return '📄';
+    if (fileType === 'doc' || fileType === 'docx') return '📝';
+    return '📎';
+  }
+
   return (
     <div>
-      <div className="page-title font-display">Take Exam</div>
-      <div className="page-sub">Enter the exam code shared with you to begin.</div>
-      <div className="card" style={{ maxWidth: 480 }}>
-        {!exam ? (
-          <>
-            <label className="field-label">Exam code</label>
-            <div style={{ display: "flex", gap: 8 }}>
-              <input 
-                value={code} 
-                onChange={(e) => setCode(e.target.value)} 
-                placeholder="e.g. 7XQ2LK" 
-                className="font-mono"
-                onKeyDown={(e) => e.key === "Enter" && findExam()}
-              />
-              <button className="btn btn-primary" onClick={findExam}>
-                <Link2 size={15} /> Find exam
-              </button>
+      <div className="page-title font-display">Exams</div>
+      <div className="page-sub">Upload PDF/DOC with questions. Questions will be extracted and saved.</div>
+
+      {!creating ? (
+        <button className="btn btn-primary" style={{ marginBottom: 20 }} onClick={() => setCreating(true)}>
+          <PlusCircle size={15} /> Create new exam
+        </button>
+      ) : (
+        <div className="card" style={{ marginBottom: 24 }}>
+          <div style={{ fontWeight: 600, marginBottom: 14 }}>New Exam</div>
+          
+          <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 0.8fr 0.8fr 0.7fr", gap: 12, marginBottom: 14 }}>
+            <div><label className="field-label">Title</label><input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Unit Test 1" /></div>
+            <div><label className="field-label">Subject</label><input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Chemistry" /></div>
+            <div><label className="field-label">Date</label><input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></div>
+            <div><label className="field-label">Time</label><input type="time" value={time} onChange={(e) => setTime(e.target.value)} /></div>
+            <div><label className="field-label">Duration (min)</label><input type="number" min="5" value={duration} onChange={(e) => setDuration(e.target.value)} /></div>
+          </div>
+
+          {/* File Upload */}
+          <div style={{ marginBottom: 16 }}>
+            <label className="field-label">Question Paper (PDF or DOC/DOCX)</label>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+              <label className="btn btn-outline btn-sm" style={{ cursor: "pointer" }}>
+                <Upload size={13} /> Choose File
+                <input 
+                  type="file" 
+                  accept=".pdf,.doc,.docx" 
+                  style={{ display: "none" }} 
+                  onChange={(e) => {
+                    const selectedFile = e.target.files[0];
+                    if (selectedFile) {
+                      handleFileUpload(selectedFile);
+                    }
+                  }} 
+                />
+              </label>
+              {file && (
+                <span style={{ fontSize: 12.5, color: "var(--muted)" }}>
+                  {getFileIcon(fileType)} {file.name} ({fileType.toUpperCase()})
+                </span>
+              )}
+              {isExtracting && <span style={{ fontSize: 12.5, color: "var(--accent)" }}>⏳ Extracting questions...</span>}
             </div>
-            <div style={{ marginTop: 12, fontSize: 12, color: "var(--muted)" }}>
-              📚 Exams available: {exams.length}
+            <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
+              Supported formats: PDF, DOC, DOCX. Questions should be numbered (1., Q1., etc.) with options (A., B., C., D.)
             </div>
-            {exams.length === 0 && (
-              <div className="notice" style={{ marginTop: 12 }}>
-                <AlertTriangle size={14} style={{ flexShrink: 0 }} />
-                <div>No exams available yet. Please contact your faculty.</div>
+          </div>
+
+          {/* Extracted Questions Preview */}
+          {extractedQuestions.length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontWeight: 600, marginBottom: 8 }}>
+                ✅ {extractedQuestions.length} questions extracted
+                <span style={{ fontWeight: 400, fontSize: 12, color: "var(--muted)", marginLeft: 8 }}>
+                  (Scroll to see all)
+                </span>
               </div>
-            )}
-          </>
-        ) : (
-          <>
-            <div className="admit-card" style={{ marginBottom: 16 }}>
-              <div className="admit-seal">{exam.subject ? exam.subject.slice(0, 2).toUpperCase() : "EX"}</div>
-              <div>
-                <div style={{ fontWeight: 600 }}>{exam.title}</div>
-                <div style={{ fontSize: 12.5, color: "var(--muted)" }}>
-                  {exam.subject} · {exam.durationMins} min · {exam.totalQuestions} questions
-                </div>
-                {exam.scheduledAt && (
-                  <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
-                    📅 {fmtDateTime(exam.scheduledAt)}
+              <div style={{ maxHeight: 200, overflowY: "auto", border: "1px solid var(--line)", borderRadius: 8, padding: 12 }}>
+                {extractedQuestions.map((q, index) => (
+                  <div key={index} style={{ 
+                    padding: "6px 0", 
+                    borderBottom: index < extractedQuestions.length - 1 ? "1px solid var(--line)" : "none",
+                    fontSize: 13
+                  }}>
+                    <strong>Q{index + 1}:</strong> {q.text.substring(0, 60)}...
+                    {q.options && q.options.length > 0 && (
+                      <span style={{ color: "var(--muted)", marginLeft: 8 }}>
+                        ({q.options.join(", ")})
+                      </span>
+                    )}
                   </div>
-                )}
+                ))}
               </div>
             </div>
-            <div style={{ fontSize: 13, marginBottom: 14 }}>Signed in as <b>{currentUser.name}</b></div>
-            
-            {exam.scheduledAt && new Date(exam.scheduledAt).getTime() < Date.now() && (
-              <div className="notice" style={{ marginBottom: 14, background: "#fef3e2", borderColor: "var(--danger)" }}>
-                <AlertTriangle size={14} style={{ flexShrink: 0 }} />
-                <div>⚠️ This exam was scheduled for {fmtDateTime(exam.scheduledAt)}. It may no longer be active.</div>
+          )}
+
+          <div className="divider" />
+
+          {/* Answer Key */}
+          <div style={{ fontWeight: 600, marginBottom: 8 }}>Answer Key</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 10, maxHeight: 260, overflowY: "auto", marginBottom: 16 }}>
+            {(extractedQuestions.length > 0 ? extractedQuestions : Array(totalQuestions).fill(null)).map((_, i) => (
+              <div key={i} style={{ border: "1px solid var(--line)", borderRadius: 8, padding: "8px 10px" }}>
+                <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 6, fontWeight: 600 }}>
+                  Question {i + 1}
+                  {extractedQuestions[i] && extractedQuestions[i].text && (
+                    <div style={{ fontSize: 10, color: "var(--muted)", fontWeight: 400, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {extractedQuestions[i].text.substring(0, 30)}...
+                    </div>
+                  )}
+                </div>
+                <div className="ans-grid">
+                  {LETTERS.map((l, oi) => (
+                    <div 
+                      key={oi} 
+                      className={`ans-btn ${answerKey[i] === oi ? "on" : ""}`} 
+                      onClick={() => {
+                        const newKey = [...answerKey];
+                        while (newKey.length <= i) newKey.push(0);
+                        newKey[i] = oi;
+                        setAnswerKey(newKey);
+                      }}
+                    >
+                      {l}
+                    </div>
+                  ))}
+                </div>
               </div>
-            )}
-            
-            <div style={{ display: "flex", gap: 10 }}>
-              <button className="btn btn-primary" onClick={beginExam}>
-                <GraduationCap size={15} /> Start exam
-              </button>
-              <button className="btn btn-outline" onClick={() => setExam(null)}>Back</button>
-            </div>
+            ))}
+          </div>
+
+          <div className="divider" />
+          <div style={{ display: "flex", gap: 10 }}>
+            <button 
+              className="btn btn-primary" 
+              onClick={saveExam} 
+              disabled={isSaving || isExtracting || extractedQuestions.length === 0}
+            >
+              <CheckCircle2 size={15} /> 
+              {isSaving ? "Saving..." : isExtracting ? "Extracting..." : `Save Exam (${extractedQuestions.length} questions)`}
+            </button>
+            <button className="btn btn-outline" onClick={resetForm}>Cancel</button>
+          </div>
+          {extractedQuestions.length === 0 && file && !isExtracting && (
             <div className="notice" style={{ marginTop: 12 }}>
               <AlertTriangle size={14} style={{ flexShrink: 0 }} />
-              <div>Questions will appear here after you start the exam.</div>
+              <div>No questions were extracted. Make sure your file has numbered questions (1., Q1., etc.) with options (A., B., C., D.)</div>
             </div>
-          </>
-        )}
+          )}
+        </div>
+      )}
+
+      {/* Existing Exams List */}
+      <div style={{ display: "grid", gap: 14 }}>
+        {exams.length === 0 && <div className="empty"><ClipboardList size={30} /><div>No exams yet — upload your first question paper above.</div></div>}
+        {exams.slice().reverse().map((exam) => {
+          const isPast = new Date(exam.scheduledAt).getTime() < Date.now();
+          const fileIcon = getFileIcon(exam.fileType || 'pdf');
+          const fileTypeLabel = (exam.fileType || 'pdf').toUpperCase();
+          
+          return (
+            <div key={exam.id} className="card">
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: 16 }}>
+                    {exam.title} {exam.subject && <span className="pill pill-gray">{exam.subject}</span>}
+                  </div>
+                  <div style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 3 }}>
+                    {fmtDateTime(exam.scheduledAt)} · {exam.durationMins} min · {exam.totalQuestions} questions
+                    {isPast && <span className="pill pill-gray" style={{ marginLeft: 8 }}>Past</span>}
+                    {exam.notified && <span className="pill pill-green" style={{ marginLeft: 8 }}><Bell size={10} /> Notified</span>}
+                  </div>
+                  {exam.fileName && (
+                    <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
+                      {fileIcon} {exam.fileName} ({fileTypeLabel})
+                    </div>
+                  )}
+                </div>
+                <button className="btn btn-danger btn-sm" onClick={() => removeExam(exam.id)}><Trash2 size={13} /></button>
+              </div>
+
+              <div className="admit-card" style={{ marginBottom: 12 }}>
+                <div className="admit-seal">{exam.subject ? exam.subject.slice(0, 2).toUpperCase() : "EX"}</div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 11.5, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Exam access code</div>
+                  <div className="admit-code">{exam.code}</div>
+                </div>
+                <button className="btn btn-outline btn-sm" onClick={() => copyLink(exam)}><Copy size={13} /> Copy link</button>
+              </div>
+
+              <div style={{ display: "flex", gap: 10 }}>
+                <button className="btn btn-accent btn-sm" onClick={() => notifyStudents(exam)}>
+                  <Send size={13} /> {exam.notified ? "Re-notify students" : "Notify students"}
+                </button>
+                <button className="btn btn-outline btn-sm" onClick={() => previewFile(exam)}>
+                  <BookOpen size={13} /> Preview file
+                </button>
+              </div>
+            </div>
+          );
+        })}
       </div>
+
+      {notifications.length > 0 && (
+        <div className="card-plain" style={{ marginTop: 24 }}>
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>Notification log</div>
+          <div style={{ maxHeight: 220, overflowY: "auto" }}>
+            <table>
+              <thead><tr><th>Student</th><th>Exam</th><th>Sent</th></tr></thead>
+              <tbody>
+                {notifications.slice().reverse().slice(0, 25).map((n) => (
+                  <tr key={n.id}><td>{n.studentName}</td><td>{n.examTitle}</td><td style={{ color: "var(--muted)" }}>{fmtDateTime(n.sentAt)}</td></tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
