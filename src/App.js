@@ -1097,113 +1097,132 @@ function ExamsTab({ exams, setExams, students, notifications, setNotifications, 
     setTotalQuestions(10); setAnswerKey(Array(10).fill(0)); setFile(null); setFileType(""); setCreating(false);
   }
 
-  async function saveExam() {
-    if (!title.trim() || !date || !time) { 
-      showToast("Fill in the title, date and time.", "error"); 
-      return; 
-    }
+ 
+     async function saveExam() {
+  // Validate required fields
+  if (!title.trim() || !date || !time) { 
+    showToast("Fill in the title, date and time.", "error"); 
+    return; 
+  }
+  
+  if (!file) { 
+    showToast("Upload the question paper (PDF or DOC).", "error"); 
+    return; 
+  }
+  
+  const fileExtension = file.name.split('.').pop().toLowerCase();
+  const allowedTypes = ['pdf', 'doc', 'docx'];
+  if (!allowedTypes.includes(fileExtension)) {
+    showToast(`Please upload a PDF or DOC file.`, "error");
+    return;
+  }
+  
+  setIsSaving(true);
+  
+  try {
+    const id = uid();
+    const scheduledAt = new Date(`${date}T${time}`).toISOString();
     
-    if (!file) { 
-      showToast("Upload the question paper (PDF or DOC).", "error"); 
-      return; 
-    }
+    // Upload file to Supabase Storage
+    const filePath = `exams/${id}/${file.name}`;
+    console.log('📤 Uploading file to:', filePath);
     
-    const fileExtension = file.name.split('.').pop().toLowerCase();
-    const allowedTypes = ['pdf', 'doc', 'docx'];
-    if (!allowedTypes.includes(fileExtension)) {
-      showToast(`Please upload a PDF or DOC file.`, "error");
+    const { data: uploadData, error: uploadError } = await supabase.storage
+      .from('exam-files')
+      .upload(filePath, file);
+    
+    if (uploadError) {
+      console.error('Upload error:', uploadError);
+      showToast('Failed to upload file: ' + uploadError.message, 'error');
+      setIsSaving(false);
       return;
     }
     
-    setIsSaving(true);
+    console.log('✅ File uploaded:', uploadData);
     
-    try {
-      // Upload file to Supabase Storage
-      const filePath = `exams/${uid()}/${file.name}`;
-      const { data: uploadData, error: uploadError } = await supabase.storage
-        .from('exam-files')
-        .upload(filePath, file);
-      
-      if (uploadError) {
-        console.error('Upload error:', uploadError);
-        showToast('Failed to upload file: ' + uploadError.message, 'error');
-        setIsSaving(false);
-        return;
-      }
-      
-      const { data: { publicUrl } } = supabase.storage
-        .from('exam-files')
-        .getPublicUrl(filePath);
-      
-      const scheduledAt = new Date(`${date}T${time}`).toISOString();
-      const id = uid();
-      
-      const rec = {
-        id: id,
-        code: genCode(),
-        title: title.trim(),
-        subject: subject.trim(),
-        scheduledAt: scheduledAt,
-        durationMins: Number(duration) || 30,
-        totalQuestions: totalQuestions,
-        correctAnswers: answerKey,
-        fileName: file.name,
-        fileType: fileExtension,
-        fileUrl: publicUrl,
-        notified: false,
-        createdAt: new Date().toISOString()
-      };
-      
-      const { data, error } = await supabase
-        .from('exams')
-        .insert([rec])
-        .select();
-      
-      if (error) {
-        console.error('Database error:', error);
-        showToast('Failed to save exam: ' + error.message, 'error');
-        setIsSaving(false);
-        return;
-      }
-      
-      // Save questions to Supabase
-      const questionsData = [];
-      for (let i = 0; i < totalQuestions; i++) {
-        questionsData.push({
-          exam_id: id,
-          question_number: i + 1,
-          question_text: `Question ${i + 1}`,
-          options: ['A', 'B', 'C', 'D'],
-          correct_answer: answerKey[i] || 0
-        });
-      }
-      
-      const { error: questionError } = await supabase
-        .from('exam_questions')
-        .insert(questionsData);
-      
-      if (questionError) {
-        console.error('Question save error:', questionError);
-      }
-      
-      // Set blob URL for viewing
-      const blob = new Blob([file], { type: file.type || 'application/octet-stream' });
-      const blobUrl = URL.createObjectURL(blob);
-      setExamPdf(id, blobUrl);
-      
-      const updatedExams = [...exams, rec];
-      setExams(updatedExams);
-      await saveKey(STORAGE_KEYS.exams, updatedExams);
-      
-      resetForm();
-      showToast(`✅ "${rec.title}" scheduled! File uploaded to cloud. Code: ${rec.code}`);
-    } catch (error) {
-      console.error('Error saving exam:', error);
+    // Get public URL
+    const { data: { publicUrl } } = supabase.storage
+      .from('exam-files')
+      .getPublicUrl(filePath);
+    
+    console.log('🔗 Public URL:', publicUrl);
+    
+    // Prepare exam data
+    const rec = {
+      id: id,
+      code: genCode(),
+      title: title.trim(),
+      subject: subject.trim() || 'General',
+      scheduledAt: scheduledAt,
+      durationMins: Number(duration) || 30,
+      totalQuestions: totalQuestions,
+      correctAnswers: answerKey,
+      fileName: file.name,
+      fileType: fileExtension,
+      fileUrl: publicUrl,
+      notified: false,
+      createdAt: new Date().toISOString()
+    };
+    
+    console.log('📝 Saving exam:', rec);
+    
+    // Save exam to Supabase
+    const { data, error } = await supabase
+      .from('exams')
+      .insert([rec])
+      .select();
+    
+    if (error) {
+      console.error('Database error:', error);
       showToast('Failed to save exam: ' + error.message, 'error');
-    } finally {
       setIsSaving(false);
+      return;
     }
+    
+    console.log('✅ Exam saved:', data);
+    
+    // Save questions to Supabase
+    const questionsData = [];
+    for (let i = 0; i < totalQuestions; i++) {
+      questionsData.push({
+        exam_id: id,
+        question_number: i + 1,
+        question_text: `Question ${i + 1}`,
+        options: ['A', 'B', 'C', 'D'],
+        correct_answer: answerKey[i] || 0
+      });
+    }
+    
+    const { error: questionError } = await supabase
+      .from('exam_questions')
+      .insert(questionsData);
+    
+    if (questionError) {
+      console.error('Question save error:', questionError);
+      // Don't fail the whole operation if questions fail
+    } else {
+      console.log('✅ Questions saved:', questionsData.length);
+    }
+    
+    // Update local state
+    const updatedExams = [...exams, rec];
+    setExams(updatedExams);
+    await saveKey(STORAGE_KEYS.exams, updatedExams);
+    
+    // Set blob URL for viewing
+    const blob = new Blob([file], { type: file.type || 'application/octet-stream' });
+    const blobUrl = URL.createObjectURL(blob);
+    setExamPdf(id, blobUrl);
+    
+    resetForm();
+    showToast(`✅ "${rec.title}" scheduled! Code: ${rec.code}`);
+  } catch (error) {
+    console.error('❌ Error saving exam:', error);
+    showToast('Failed to save exam: ' + error.message, 'error');
+  } finally {
+    setIsSaving(false);
   }
+} 
 
   async function removeExam(id) { 
     try {
@@ -1272,13 +1291,14 @@ function ExamsTab({ exams, setExams, students, notifications, setNotifications, 
   }
 
   function previewFile(exam) {
-    const url = examPdfUrls[exam.id] || exam.fileUrl;
-    if (!url) { 
-      showToast("This file isn't available in the current browser session.", "error"); 
-      return; 
-    }
-    window.open(url, "_blank");
+  // Try multiple sources for the file URL
+  const url = examPdfUrls[exam.id] || exam.fileUrl || exam.fileData;
+  if (!url) { 
+    showToast("This file isn't available.", "error"); 
+    return; 
   }
+  window.open(url, "_blank");
+}
 
   function getFileIcon(fileType) {
     if (fileType === 'pdf') return '📄';
