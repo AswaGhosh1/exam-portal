@@ -1569,16 +1569,13 @@ function ExamsTab({ exams, setExams, students, notifications, setNotifications, 
     
     let currentQuestion = null;
     let currentOptions = [];
-    let foundQuestions = false;
     
-    // Patterns for questions
     const questionPatterns = [
       /^Q(\d+)[\.\)]\s*(.+)/i,
       /^(\d+)[\.\)]\s*(.+)/,
       /^Question\s*(\d+)[\.\)]\s*(.+)/i,
     ];
     
-    // Patterns for options
     const optionPatterns = [
       /^([A-D])[\.\)]\s*(.+)/,
       /^([a-d])[\.\)]\s*(.+)/,
@@ -1597,7 +1594,6 @@ function ExamsTab({ exams, setExams, students, notifications, setNotifications, 
         if (match) {
           questionMatch = match;
           isQuestion = true;
-          foundQuestions = true;
           break;
         }
       }
@@ -1713,7 +1709,6 @@ function ExamsTab({ exams, setExams, students, notifications, setNotifications, 
       const id = uid();
       const scheduledAt = new Date(`${date}T${time}`).toISOString();
       
-      // Convert file to base64 for storage
       const fileData = await new Promise((resolve) => {
         const reader = new FileReader();
         reader.onload = (e) => resolve(e.target.result);
@@ -1887,7 +1882,6 @@ function ExamsTab({ exams, setExams, students, notifications, setNotifications, 
             <div><label className="field-label">Duration (min)</label><input type="number" min="5" value={duration} onChange={(e) => setDuration(e.target.value)} /></div>
           </div>
 
-          {/* File Upload */}
           <div style={{ marginBottom: 16 }}>
             <label className="field-label">Question Paper (PDF or DOC/DOCX)</label>
             <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
@@ -1917,7 +1911,6 @@ function ExamsTab({ exams, setExams, students, notifications, setNotifications, 
             </div>
           </div>
 
-          {/* Extracted Questions Preview */}
           {extractedQuestions.length > 0 && (
             <div style={{ marginBottom: 16 }}>
               <div style={{ fontWeight: 600, marginBottom: 8 }}>
@@ -1947,7 +1940,6 @@ function ExamsTab({ exams, setExams, students, notifications, setNotifications, 
 
           <div className="divider" />
 
-          {/* Answer Key */}
           <div style={{ fontWeight: 600, marginBottom: 8 }}>Answer Key</div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 10, maxHeight: 260, overflowY: "auto", marginBottom: 16 }}>
             {(extractedQuestions.length > 0 ? extractedQuestions : Array(totalQuestions).fill(null)).map((_, i) => (
@@ -2001,7 +1993,6 @@ function ExamsTab({ exams, setExams, students, notifications, setNotifications, 
         </div>
       )}
 
-      {/* Existing Exams List */}
       <div style={{ display: "grid", gap: 14 }}>
         {exams.length === 0 && <div className="empty"><ClipboardList size={30} /><div>No exams yet — upload your first question paper above.</div></div>}
         {exams.slice().reverse().map((exam) => {
