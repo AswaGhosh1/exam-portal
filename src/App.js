@@ -1097,7 +1097,10 @@ function ExamsTab({ exams, setExams, students, notifications, setNotifications, 
     setTotalQuestions(10); setAnswerKey(Array(10).fill(0)); setFile(null); setFileType(""); setCreating(false);
   }
 
- async function saveExam() {
+ // In ExamsTab component - REPLACE these functions
+
+async function saveExam() {
+  // Validate inputs
   if (!title.trim() || !date || !time) { 
     showToast("Fill in the title, date and time.", "error"); 
     return; 
@@ -1109,9 +1112,8 @@ function ExamsTab({ exams, setExams, students, notifications, setNotifications, 
   }
   
   const fileExtension = file.name.split('.').pop().toLowerCase();
-  const allowedTypes = ['pdf', 'doc', 'docx'];
-  if (!allowedTypes.includes(fileExtension)) {
-    showToast(`Please upload a PDF or DOC file.`, "error");
+  if (!['pdf', 'doc', 'docx'].includes(fileExtension)) {
+    showToast("Please upload a PDF or DOC file.", "error");
     return;
   }
   
@@ -1139,54 +1141,15 @@ function ExamsTab({ exams, setExams, students, notifications, setNotifications, 
       correctAnswers: answerKey,
       fileName: file.name,
       fileType: fileExtension,
-      fileData: fileData, // Store base64 directly
+      fileData: fileData,
       notified: false,
       createdAt: new Date().toISOString()
     };
     
-    console.log('📝 Saving exam with base64 file...');
+    // Save to Supabase
+    await supabase.from('exams').insert([rec]);
     
-    // Try Supabase first
-    let savedToSupabase = false;
-    try {
-      const { data, error } = await supabase
-        .from('exams')
-        .insert([rec])
-        .select();
-      
-      if (!error) {
-        savedToSupabase = true;
-        console.log('✅ Exam saved to Supabase');
-      } else {
-        console.error('Supabase error:', error);
-      }
-    } catch (dbError) {
-      console.error('Database error:', dbError);
-    }
-    
-    // Always save to localStorage as well
-    const updatedExams = [...exams, rec];
-    setExams(updatedExams);
-    await saveKey(STORAGE_KEYS.exams, updatedExams);
-    
-    // Set blob URL for viewing
-    const blob = new Blob([file], { type: file.type || 'application/octet-stream' });
-    const blobUrl = URL.createObjectURL(blob);
-    setExamPdf(id, blobUrl);
-    
-    resetForm();
-    showToast(`✅ "${rec.title}" scheduled! Code: ${rec.code}${savedToSupabase ? '' : ' (saved locally)'}`);
-  } catch (error) {
-    console.error('❌ Error saving exam:', error);
-    showToast('Failed to save exam: ' + error.message, 'error');
-  } finally {
-    setIsSaving(false);
-  }
-}
-   
-    console.log('✅ Exam saved:', data);
-    
-    // Save questions to Supabase
+    // Save questions
     const questionsData = [];
     for (let i = 0; i < totalQuestions; i++) {
       questionsData.push({
@@ -1197,37 +1160,90 @@ function ExamsTab({ exams, setExams, students, notifications, setNotifications, 
         correct_answer: answerKey[i] || 0
       });
     }
+    await supabase.from('exam_questions').insert(questionsData);
     
-    const { error: questionError } = await supabase
-      .from('exam_questions')
-      .insert(questionsData);
-    
-    if (questionError) {
-      console.error('Question save error:', questionError);
-      // Don't fail the whole operation if questions fail
-    } else {
-      console.log('✅ Questions saved:', questionsData.length);
-    }
-    
-    // Update local state
+    // Save to localStorage
     const updatedExams = [...exams, rec];
     setExams(updatedExams);
     await saveKey(STORAGE_KEYS.exams, updatedExams);
     
-    // Set blob URL for viewing
+    // Set blob URL
     const blob = new Blob([file], { type: file.type || 'application/octet-stream' });
-    const blobUrl = URL.createObjectURL(blob);
-    setExamPdf(id, blobUrl);
+    setExamPdf(id, URL.createObjectURL(blob));
     
     resetForm();
     showToast(`✅ "${rec.title}" scheduled! Code: ${rec.code}`);
   } catch (error) {
-    console.error('❌ Error saving exam:', error);
+    console.error('Error saving exam:', error);
     showToast('Failed to save exam: ' + error.message, 'error');
   } finally {
     setIsSaving(false);
   }
-} 
+}
+
+async function removeExam(id) { 
+  try {
+    const { error } = await supabase
+      .from('exams')
+      .delete()
+      .eq('id', id);
+    
+    if (error) {
+      console.error('Supabase delete error:', error);
+    }
+    
+    const updated = exams.filter((e) => e.id !== id);
+    setExams(updated);
+    saveKey(STORAGE_KEYS.exams, updated);
+    showToast("Exam removed.");
+  } catch (error) {
+    console.error('Error removing exam:', error);
+    showToast('Failed to remove exam.', 'error');
+  }
+}
+
+async function notifyStudents(exam) {
+  if (students.length === 0) { 
+    showToast("Add students first — there's no one to notify yet.", "error"); 
+    return; 
+  }
+  
+  const link = `https://your-school-domain.com/exam/${exam.code}`;
+  const entries = students.map((s) => ({ 
+    id: uid(), 
+    examId: exam.id, 
+    examTitle: exam.title, 
+    studentName: s.name, 
+    email: s.email || s.username + '@example.com', 
+    phone: s.phone, 
+    link, 
+    sentAt: new Date().toISOString() 
+  }));
+  
+  try {
+    const { error } = await supabase
+      .from('exams')
+      .update({ notified: true })
+      .eq('id', exam.id);
+    
+    if (error) {
+      console.error('Supabase update error:', error);
+    }
+    
+    const updated = [...notifications, ...entries];
+    setNotifications(updated);
+    saveKey(STORAGE_KEYS.notifications, updated);
+    
+    const updatedExams = exams.map((e) => (e.id === exam.id ? { ...e, notified: true } : e));
+    setExams(updatedExams);
+    saveKey(STORAGE_KEYS.exams, updatedExams);
+    
+    showToast(`Simulated email + SMS sent to ${students.length} student(s).`);
+  } catch (error) {
+    console.error('Error notifying students:', error);
+    showToast('Failed to notify students.', 'error');
+  }
+}
 
   async function removeExam(id) { 
     try {
@@ -1503,53 +1519,39 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
   }
 
   async function beginExam() {
-    const already = results.find((r) => r.examId === exam.id && r.studentId === currentUser.id);
-    if (already) { 
-      setFinished(already); 
-      setShowReview(true);
-      return; 
-    }
+  const already = results.find((r) => r.examId === exam.id && r.studentId === currentUser.id);
+  if (already) { 
+    setFinished(already); 
+    setShowReview(true);
+    return; 
+  }
+  
+  setAnswers({}); 
+  setQIndex(0); 
+  setSecondsLeft(exam.durationMins * 60); 
+  setStarted(true);
+  setShowReview(false);
+  setIsLoading(true);
+  
+  try {
+    // Load questions from Supabase
+    const { data: questionsData, error: questionsError } = await supabase
+      .from('exam_questions')
+      .select('*')
+      .eq('exam_id', exam.id)
+      .order('question_number');
     
-    setAnswers({}); 
-    setQIndex(0); 
-    setSecondsLeft(exam.durationMins * 60); 
-    setStarted(true);
-    setShowReview(false);
-    setIsLoading(true);
-    
-    try {
-      // Load questions from Supabase
-      const { data: questionsData, error: questionsError } = await supabase
-        .from('exam_questions')
-        .select('*')
-        .eq('exam_id', exam.id)
-        .order('question_number');
-      
-      if (questionsData && questionsData.length > 0) {
-        const parsedQuestions = questionsData.map(q => ({
-          id: q.question_number - 1,
-          text: q.question_text,
-          options: q.options || ['A', 'B', 'C', 'D'],
-          correctAnswer: q.correct_answer
-        }));
-        setQuestions(parsedQuestions);
-        showToast(`✅ Loaded ${parsedQuestions.length} questions`, "success");
-      } else {
-        // Fallback: Create default questions
-        const defaultQuestions = [];
-        for (let i = 0; i < exam.totalQuestions; i++) {
-          defaultQuestions.push({
-            id: i,
-            text: `Question ${i + 1}`,
-            options: ['A', 'B', 'C', 'D'],
-            correctAnswer: exam.correctAnswers ? exam.correctAnswers[i] || 0 : 0
-          });
-        }
-        setQuestions(defaultQuestions);
-        showToast("📄 Using default questions", "info");
-      }
-    } catch (error) {
-      console.error("Error loading questions:", error);
+    if (questionsData && questionsData.length > 0) {
+      const parsedQuestions = questionsData.map(q => ({
+        id: q.question_number - 1,
+        text: q.question_text,
+        options: q.options || ['A', 'B', 'C', 'D'],
+        correctAnswer: q.correct_answer
+      }));
+      setQuestions(parsedQuestions);
+      showToast(`✅ Loaded ${parsedQuestions.length} questions`, "success");
+    } else {
+      // Fallback: Create default questions
       const defaultQuestions = [];
       for (let i = 0; i < exam.totalQuestions; i++) {
         defaultQuestions.push({
@@ -1560,11 +1562,26 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
         });
       }
       setQuestions(defaultQuestions);
-    } finally {
-      setIsLoading(false);
+      showToast("📄 Using default questions", "info");
     }
+  } catch (error) {
+    console.error("Error loading questions:", error);
+    const defaultQuestions = [];
+    for (let i = 0; i < exam.totalQuestions; i++) {
+      defaultQuestions.push({
+        id: i,
+        text: `Question ${i + 1}`,
+        options: ['A', 'B', 'C', 'D'],
+        correctAnswer: exam.correctAnswers ? exam.correctAnswers[i] || 0 : 0
+      });
+    }
+    setQuestions(defaultQuestions);
+  } finally {
+    setIsLoading(false);
   }
-
+}
+  
+      
   function selectAnswer(oi) { 
     setAnswers({ ...answers, [qIndex]: oi }); 
   }
