@@ -1693,12 +1693,17 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
     setIsLoading(true);
     
     try {
+      console.log('🔍 Loading questions for exam:', exam.id);
+      console.log('📝 Exam data:', exam);
+      
       // Load questions from Supabase
       const { data: questionsData, error: questionsError } = await supabase
         .from('exam_questions')
         .select('*')
         .eq('exam_id', exam.id)
         .order('question_number');
+      
+      console.log('📊 Questions from DB:', questionsData);
       
       if (questionsData && questionsData.length > 0) {
         const parsedQuestions = questionsData.map(q => ({
@@ -1709,8 +1714,9 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
         }));
         setQuestions(parsedQuestions);
         showToast(`✅ Loaded ${parsedQuestions.length} questions`, "success");
+        console.log('✅ Questions loaded:', parsedQuestions);
       } else {
-        // Fallback questions if none in database
+        // No questions in database - create default
         const defaultQuestions = [];
         for (let i = 0; i < exam.totalQuestions; i++) {
           defaultQuestions.push({
@@ -1721,7 +1727,8 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
           });
         }
         setQuestions(defaultQuestions);
-        showToast("📄 Using default questions", "info");
+        showToast(`📄 ${defaultQuestions.length} default questions loaded`, "info");
+        console.log('📄 Default questions:', defaultQuestions);
       }
     } catch (error) {
       console.error("Error loading questions:", error);
@@ -2009,6 +2016,10 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
       }));
 
     const currentQuestion = currentQuestions[qIndex] || currentQuestions[0];
+
+    // Debug: Log current question
+    console.log('📝 Current question:', currentQuestion);
+    console.log('📝 All questions:', currentQuestions);
 
     return (
       <div>
