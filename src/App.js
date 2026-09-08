@@ -1097,9 +1097,7 @@ function ExamsTab({ exams, setExams, students, notifications, setNotifications, 
     setTotalQuestions(10); setAnswerKey(Array(10).fill(0)); setFile(null); setFileType(""); setCreating(false);
   }
 
- 
-     async function saveExam() {
-  // Validate required fields
+ async function saveExam() {
   if (!title.trim() || !date || !time) { 
     showToast("Fill in the title, date and time.", "error"); 
     return; 
@@ -1123,31 +1121,13 @@ function ExamsTab({ exams, setExams, students, notifications, setNotifications, 
     const id = uid();
     const scheduledAt = new Date(`${date}T${time}`).toISOString();
     
-    // Upload file to Supabase Storage
-    const filePath = `exams/${id}/${file.name}`;
-    console.log('📤 Uploading file to:', filePath);
+    // Convert file to base64
+    const fileData = await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (e) => resolve(e.target.result);
+      reader.readAsDataURL(file);
+    });
     
-    const { data: uploadData, error: uploadError } = await supabase.storage
-      .from('exam-files')
-      .upload(filePath, file);
-    
-    if (uploadError) {
-      console.error('Upload error:', uploadError);
-      showToast('Failed to upload file: ' + uploadError.message, 'error');
-      setIsSaving(false);
-      return;
-    }
-    
-    console.log('✅ File uploaded:', uploadData);
-    
-    // Get public URL
-    const { data: { publicUrl } } = supabase.storage
-      .from('exam-files')
-      .getPublicUrl(filePath);
-    
-    console.log('🔗 Public URL:', publicUrl);
-    
-    // Prepare exam data
     const rec = {
       id: id,
       code: genCode(),
@@ -1159,26 +1139,51 @@ function ExamsTab({ exams, setExams, students, notifications, setNotifications, 
       correctAnswers: answerKey,
       fileName: file.name,
       fileType: fileExtension,
-      fileUrl: publicUrl,
+      fileData: fileData, // Store base64 directly
       notified: false,
       createdAt: new Date().toISOString()
     };
     
-    console.log('📝 Saving exam:', rec);
+    console.log('📝 Saving exam with base64 file...');
     
-    // Save exam to Supabase
-    const { data, error } = await supabase
-      .from('exams')
-      .insert([rec])
-      .select();
-    
-    if (error) {
-      console.error('Database error:', error);
-      showToast('Failed to save exam: ' + error.message, 'error');
-      setIsSaving(false);
-      return;
+    // Try Supabase first
+    let savedToSupabase = false;
+    try {
+      const { data, error } = await supabase
+        .from('exams')
+        .insert([rec])
+        .select();
+      
+      if (!error) {
+        savedToSupabase = true;
+        console.log('✅ Exam saved to Supabase');
+      } else {
+        console.error('Supabase error:', error);
+      }
+    } catch (dbError) {
+      console.error('Database error:', dbError);
     }
     
+    // Always save to localStorage as well
+    const updatedExams = [...exams, rec];
+    setExams(updatedExams);
+    await saveKey(STORAGE_KEYS.exams, updatedExams);
+    
+    // Set blob URL for viewing
+    const blob = new Blob([file], { type: file.type || 'application/octet-stream' });
+    const blobUrl = URL.createObjectURL(blob);
+    setExamPdf(id, blobUrl);
+    
+    resetForm();
+    showToast(`✅ "${rec.title}" scheduled! Code: ${rec.code}${savedToSupabase ? '' : ' (saved locally)'}`);
+  } catch (error) {
+    console.error('❌ Error saving exam:', error);
+    showToast('Failed to save exam: ' + error.message, 'error');
+  } finally {
+    setIsSaving(false);
+  }
+}
+   
     console.log('✅ Exam saved:', data);
     
     // Save questions to Supabase
@@ -1290,9 +1295,9 @@ function ExamsTab({ exams, setExams, students, notifications, setNotifications, 
     showToast("Exam link copied.");
   }
 
-  function previewFile(exam) {
-  // Try multiple sources for the file URL
-  const url = examPdfUrls[exam.id] || exam.fileUrl || exam.fileData;
+ function previewFile(exam) {
+  // Try multiple sources for the file
+  const url = examPdfUrls[exam.id] || exam.fileData || exam.fileUrl;
   if (!url) { 
     showToast("This file isn't available.", "error"); 
     return; 
@@ -1465,8 +1470,6 @@ function ExamsTab({ exams, setExams, students, notifications, setNotifications, 
   );
 }
 
-/* ---------------------------------- Take Exam ---------------------------------- */
-
 function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, showToast }) {
   const [code, setCode] = useState("");
   const [exam, setExam] = useState(null);
@@ -1539,7 +1542,7 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
             id: i,
             text: `Question ${i + 1}`,
             options: ['A', 'B', 'C', 'D'],
-            correctAnswer: exam.correctAnswers[i] || 0
+            correctAnswer: exam.correctAnswers ? exam.correctAnswers[i] || 0 : 0
           });
         }
         setQuestions(defaultQuestions);
@@ -1553,7 +1556,7 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
           id: i,
           text: `Question ${i + 1}`,
           options: ['A', 'B', 'C', 'D'],
-          correctAnswer: exam.correctAnswers[i] || 0
+          correctAnswer: exam.correctAnswers ? exam.correctAnswers[i] || 0 : 0
         });
       }
       setQuestions(defaultQuestions);
@@ -1572,12 +1575,13 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
     const questionResults = [];
     
     for (let i = 0; i < exam.totalQuestions; i++) {
-      const isCorrect = answers[i] === exam.correctAnswers[i];
+      const correctAns = exam.correctAnswers ? exam.correctAnswers[i] : 0;
+      const isCorrect = answers[i] === correctAns;
       if (isCorrect) score += 1;
       questionResults.push({
         questionIndex: i,
         userAnswer: answers[i] !== undefined ? answers[i] : null,
-        correctAnswer: exam.correctAnswers[i],
+        correctAnswer: correctAns,
         isCorrect: isCorrect
       });
     }
@@ -1847,8 +1851,8 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
           ))}
         </div>
 
-        {/* PDF Viewer - Optional, below questions */}
-        {exam.fileUrl && (
+        {/* PDF Viewer - Show if file exists */}
+        {exam.fileData && (
           <div style={{ marginBottom: 16 }}>
             <details style={{ cursor: "pointer" }}>
               <summary style={{ 
@@ -1864,7 +1868,7 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
               <div style={{ marginTop: 8 }}>
                 <iframe 
                   title="question-paper" 
-                  src={exam.fileUrl}
+                  src={exam.fileData}
                   className="pdf-frame" 
                   style={{ 
                     height: 300, 
@@ -2011,12 +2015,26 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
           <>
             <label className="field-label">Exam code</label>
             <div style={{ display: "flex", gap: 8 }}>
-              <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="e.g. 7XQ2LK" className="font-mono" />
-              <button className="btn btn-primary" onClick={findExam}><Link2 size={15} /> Find exam</button>
+              <input 
+                value={code} 
+                onChange={(e) => setCode(e.target.value)} 
+                placeholder="e.g. 7XQ2LK" 
+                className="font-mono"
+                onKeyDown={(e) => e.key === "Enter" && findExam()}
+              />
+              <button className="btn btn-primary" onClick={findExam}>
+                <Link2 size={15} /> Find exam
+              </button>
             </div>
             <div style={{ marginTop: 12, fontSize: 12, color: "var(--muted)" }}>
               📚 Exams available: {exams.length}
             </div>
+            {exams.length === 0 && (
+              <div className="notice" style={{ marginTop: 12 }}>
+                <AlertTriangle size={14} style={{ flexShrink: 0 }} />
+                <div>No exams available yet. Please contact your faculty.</div>
+              </div>
+            )}
           </>
         ) : (
           <>
@@ -2033,11 +2051,27 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
                     📄 {exam.fileName}
                   </div>
                 )}
+                {exam.scheduledAt && (
+                  <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
+                    📅 {fmtDateTime(exam.scheduledAt)}
+                  </div>
+                )}
               </div>
             </div>
             <div style={{ fontSize: 13, marginBottom: 14 }}>Signed in as <b>{currentUser.name}</b></div>
+            
+            {/* Check if exam is past */}
+            {exam.scheduledAt && new Date(exam.scheduledAt).getTime() < Date.now() && (
+              <div className="notice" style={{ marginBottom: 14, background: "#fef3e2", borderColor: "var(--danger)" }}>
+                <AlertTriangle size={14} style={{ flexShrink: 0 }} />
+                <div>⚠️ This exam was scheduled for {fmtDateTime(exam.scheduledAt)}. It may no longer be active.</div>
+              </div>
+            )}
+            
             <div style={{ display: "flex", gap: 10 }}>
-              <button className="btn btn-primary" onClick={beginExam}><GraduationCap size={15} /> Start exam</button>
+              <button className="btn btn-primary" onClick={beginExam}>
+                <GraduationCap size={15} /> Start exam
+              </button>
               <button className="btn btn-outline" onClick={() => setExam(null)}>Back</button>
             </div>
             <div className="notice" style={{ marginTop: 12 }}>
