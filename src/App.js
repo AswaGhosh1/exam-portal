@@ -1078,425 +1078,6 @@ function ExamsTab({ exams, setExams, students, notifications, setNotifications, 
   const [date, setDate] = useState("");
   const [time, setTime] = useState("");
   const [duration, setDuration] = useState(30);
-  const [totalQuestions, setTotalQuestions] = useState(10);
-  const [answerKey, setAnswerKey] = useState(Array(10).fill(0));
-  const [file, setFile] = useState(null);
-  const [fileType, setFileType] = useState("");
-  const [isSaving, setIsSaving] = useState(false);
-
-  function changeTotalQuestions(val) {
-    const n = Math.max(1, Math.min(200, Number(val) || 1));
-    setTotalQuestions(n);
-    setAnswerKey((prev) => {
-      const next = prev.slice(0, n);
-      while (next.length < n) next.push(0);
-      return next;
-    });
-  }
-
-  function resetForm() {
-    setTitle(""); setSubject(""); setDate(""); setTime(""); setDuration(30);
-    setTotalQuestions(10); setAnswerKey(Array(10).fill(0)); setFile(null); setFileType(""); setCreating(false);
-  }
-
- // In ExamsTab component - REPLACE these functions
-
-async function saveExam() {
-  // Validate inputs
-  if (!title.trim() || !date || !time) { 
-    showToast("Fill in the title, date and time.", "error"); 
-    return; 
-  }
-  
-  if (!file) { 
-    showToast("Upload the question paper (PDF or DOC).", "error"); 
-    return; 
-  }
-  
-  const fileExtension = file.name.split('.').pop().toLowerCase();
-  if (!['pdf', 'doc', 'docx'].includes(fileExtension)) {
-    showToast("Please upload a PDF or DOC file.", "error");
-    return;
-  }
-  
-  setIsSaving(true);
-  
-  try {
-    const id = uid();
-    const scheduledAt = new Date(`${date}T${time}`).toISOString();
-    
-    // Convert file to base64
-    const fileData = await new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onload = (e) => resolve(e.target.result);
-      reader.readAsDataURL(file);
-    });
-    
-    const rec = {
-      id: id,
-      code: genCode(),
-      title: title.trim(),
-      subject: subject.trim() || 'General',
-      scheduledAt: scheduledAt,
-      durationMins: Number(duration) || 30,
-      totalQuestions: totalQuestions,
-      correctAnswers: answerKey,
-      fileName: file.name,
-      fileType: fileExtension,
-      fileData: fileData,
-      notified: false,
-      createdAt: new Date().toISOString()
-    };
-    
-    // Save to Supabase
-    await supabase.from('exams').insert([rec]);
-    
-    // Save questions
-    const questionsData = [];
-    for (let i = 0; i < totalQuestions; i++) {
-      questionsData.push({
-        exam_id: id,
-        question_number: i + 1,
-        question_text: `Question ${i + 1}`,
-        options: ['A', 'B', 'C', 'D'],
-        correct_answer: answerKey[i] || 0
-      });
-    }
-    await supabase.from('exam_questions').insert(questionsData);
-    
-    // Save to localStorage
-    const updatedExams = [...exams, rec];
-    setExams(updatedExams);
-    await saveKey(STORAGE_KEYS.exams, updatedExams);
-    
-    // Set blob URL
-    const blob = new Blob([file], { type: file.type || 'application/octet-stream' });
-    setExamPdf(id, URL.createObjectURL(blob));
-    
-    resetForm();
-    showToast(`✅ "${rec.title}" scheduled! Code: ${rec.code}`);
-  } catch (error) {
-    console.error('Error saving exam:', error);
-    showToast('Failed to save exam: ' + error.message, 'error');
-  } finally {
-    setIsSaving(false);
-  }
-}
-
-async function removeExam(id) { 
-  try {
-    const { error } = await supabase
-      .from('exams')
-      .delete()
-      .eq('id', id);
-    
-    if (error) {
-      console.error('Supabase delete error:', error);
-    }
-    
-    const updated = exams.filter((e) => e.id !== id);
-    setExams(updated);
-    saveKey(STORAGE_KEYS.exams, updated);
-    showToast("Exam removed.");
-  } catch (error) {
-    console.error('Error removing exam:', error);
-    showToast('Failed to remove exam.', 'error');
-  }
-}
-
-async function notifyStudents(exam) {
-  if (students.length === 0) { 
-    showToast("Add students first — there's no one to notify yet.", "error"); 
-    return; 
-  }
-  
-  const link = `https://your-school-domain.com/exam/${exam.code}`;
-  const entries = students.map((s) => ({ 
-    id: uid(), 
-    examId: exam.id, 
-    examTitle: exam.title, 
-    studentName: s.name, 
-    email: s.email || s.username + '@example.com', 
-    phone: s.phone, 
-    link, 
-    sentAt: new Date().toISOString() 
-  }));
-  
-  try {
-    const { error } = await supabase
-      .from('exams')
-      .update({ notified: true })
-      .eq('id', exam.id);
-    
-    if (error) {
-      console.error('Supabase update error:', error);
-    }
-    
-    const updated = [...notifications, ...entries];
-    setNotifications(updated);
-    saveKey(STORAGE_KEYS.notifications, updated);
-    
-    const updatedExams = exams.map((e) => (e.id === exam.id ? { ...e, notified: true } : e));
-    setExams(updatedExams);
-    saveKey(STORAGE_KEYS.exams, updatedExams);
-    
-    showToast(`Simulated email + SMS sent to ${students.length} student(s).`);
-  } catch (error) {
-    console.error('Error notifying students:', error);
-    showToast('Failed to notify students.', 'error');
-  }
-}
-
-  async function removeExam(id) { 
-    try {
-      const { error } = await supabase
-        .from('exams')
-        .delete()
-        .eq('id', id);
-      
-      if (error) throw error;
-      
-      const updated = exams.filter((e) => e.id !== id);
-      setExams(updated);
-      saveKey(STORAGE_KEYS.exams, updated);
-      showToast("Exam removed.");
-    } catch (error) {
-      console.error('Error removing exam:', error);
-      showToast('Failed to remove exam.', 'error');
-    }
-  }
-
-  async function notifyStudents(exam) {
-    if (students.length === 0) { 
-      showToast("Add students first — there's no one to notify yet.", "error"); 
-      return; 
-    }
-    
-    const link = `https://your-school-domain.com/exam/${exam.code}`;
-    const entries = students.map((s) => ({ 
-      id: uid(), 
-      examId: exam.id, 
-      examTitle: exam.title, 
-      studentName: s.name, 
-      email: s.email, 
-      phone: s.phone, 
-      link, 
-      sentAt: new Date().toISOString() 
-    }));
-    
-    try {
-      const { error } = await supabase
-        .from('exams')
-        .update({ notified: true })
-        .eq('id', exam.id);
-      
-      if (error) throw error;
-      
-      const updated = [...notifications, ...entries];
-      setNotifications(updated);
-      saveKey(STORAGE_KEYS.notifications, updated);
-      
-      const updatedExams = exams.map((e) => (e.id === exam.id ? { ...e, notified: true } : e));
-      setExams(updatedExams);
-      saveKey(STORAGE_KEYS.exams, updatedExams);
-      
-      showToast(`Simulated email + SMS sent to ${students.length} student(s).`);
-    } catch (error) {
-      console.error('Error notifying students:', error);
-      showToast('Failed to notify students.', 'error');
-    }
-  }
-
-  function copyLink(exam) {
-    const link = `https://your-school-domain.com/exam/${exam.code}`;
-    if (navigator.clipboard) navigator.clipboard.writeText(link).catch(() => {});
-    showToast("Exam link copied.");
-  }
-
- function previewFile(exam) {
-  // Try multiple sources for the file
-  const url = examPdfUrls[exam.id] || exam.fileData || exam.fileUrl;
-  if (!url) { 
-    showToast("This file isn't available.", "error"); 
-    return; 
-  }
-  window.open(url, "_blank");
-}
-
-  function getFileIcon(fileType) {
-    if (fileType === 'pdf') return '📄';
-    if (fileType === 'doc' || fileType === 'docx') return '📝';
-    return '📎';
-  }
-
-  return (
-    <div>
-      <div className="page-title font-display">Exams</div>
-      <div className="page-sub">Upload a question paper (PDF or DOC) and conduct the mock test.</div>
-
-      {!creating ? (
-        <button className="btn btn-primary" style={{ marginBottom: 20 }} onClick={() => setCreating(true)}>
-          <PlusCircle size={15} /> Schedule new exam
-        </button>
-      ) : (
-        <div className="card" style={{ marginBottom: 24 }}>
-          <div style={{ fontWeight: 600, marginBottom: 14 }}>New exam</div>
-          <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 0.8fr 0.8fr 0.7fr", gap: 12, marginBottom: 14 }}>
-            <div><label className="field-label">Title</label><input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Unit Test 1" /></div>
-            <div><label className="field-label">Subject</label><input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Chemistry" /></div>
-            <div><label className="field-label">Date</label><input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></div>
-            <div><label className="field-label">Time</label><input type="time" value={time} onChange={(e) => setTime(e.target.value)} /></div>
-            <div><label className="field-label">Duration (min)</label><input type="number" min="5" value={duration} onChange={(e) => setDuration(e.target.value)} /></div>
-          </div>
-
-          <div style={{ marginBottom: 16 }}>
-            <label className="field-label">Question paper (PDF or DOC/DOCX) — required</label>
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <label className="btn btn-outline btn-sm" style={{ cursor: "pointer" }}>
-                <Upload size={13} /> Upload PDF or DOC/DOCX
-                <input 
-                  type="file" 
-                  accept=".pdf,.doc,.docx" 
-                  style={{ display: "none" }} 
-                  onChange={(e) => {
-                    const selectedFile = e.target.files[0] || null;
-                    if (selectedFile) {
-                      const ext = selectedFile.name.split('.').pop().toLowerCase();
-                      if (['pdf', 'doc', 'docx'].includes(ext)) {
-                        setFile(selectedFile);
-                        setFileType(ext);
-                      } else {
-                        showToast("Please upload a PDF or DOC file.", "error");
-                        e.target.value = '';
-                      }
-                    }
-                  }} 
-                />
-              </label>
-              {file && (
-                <span style={{ fontSize: 12.5, color: "var(--muted)" }}>
-                  {getFileIcon(fileType)} {file.name} ({fileType.toUpperCase()})
-                </span>
-              )}
-            </div>
-            <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
-              Supported formats: PDF, DOC, DOCX
-            </div>
-          </div>
-
-          <div className="divider" />
-          <div style={{ display: "flex", gap: 14, alignItems: "flex-end", marginBottom: 14 }}>
-            <div style={{ width: 200 }}>
-              <label className="field-label">Number of questions</label>
-              <input type="number" min="1" value={totalQuestions} onChange={(e) => changeTotalQuestions(e.target.value)} />
-            </div>
-            <div style={{ fontSize: 12.5, color: "var(--muted)" }}>
-              Students will answer questions based on the PDF content
-            </div>
-          </div>
-
-          <div style={{ fontWeight: 600, marginBottom: 8 }}>Answer key</div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 10, maxHeight: 260, overflowY: "auto", marginBottom: 16 }}>
-            {answerKey.map((val, i) => (
-              <div key={i} style={{ border: "1px solid var(--line)", borderRadius: 8, padding: "8px 10px" }}>
-                <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 6, fontWeight: 600 }}>Question {i + 1}</div>
-                <div className="ans-grid">
-                  {LETTERS.map((l, oi) => (
-                    <div key={oi} className={`ans-btn ${val === oi ? "on" : ""}`} onClick={() => setAnswerKey(answerKey.map((v, idx) => (idx === i ? oi : v)))}>{l}</div>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <div className="divider" />
-          <div style={{ display: "flex", gap: 10 }}>
-            <button className="btn btn-primary" onClick={saveExam} disabled={isSaving}>
-              <CheckCircle2 size={15} /> {isSaving ? "Saving..." : "Save & schedule exam"}
-            </button>
-            <button className="btn btn-outline" onClick={resetForm}>Cancel</button>
-          </div>
-        </div>
-      )}
-
-      <div style={{ display: "grid", gap: 14 }}>
-        {exams.length === 0 && <div className="empty"><ClipboardList size={30} /><div>No exams yet — schedule your first mock test above.</div></div>}
-        {exams.slice().reverse().map((exam) => {
-          const isPast = new Date(exam.scheduledAt).getTime() < Date.now();
-          const fileIcon = getFileIcon(exam.fileType || 'pdf');
-          const fileTypeLabel = (exam.fileType || 'pdf').toUpperCase();
-          
-          return (
-            <div key={exam.id} className="card">
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
-                <div>
-                  <div style={{ fontWeight: 600, fontSize: 16 }}>
-                    {exam.title} {exam.subject && <span className="pill pill-gray">{exam.subject}</span>}
-                  </div>
-                  <div style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 3 }}>
-                    {fmtDateTime(exam.scheduledAt)} · {exam.durationMins} min · {exam.totalQuestions} question{exam.totalQuestions !== 1 ? "s" : ""} · 
-                    {fileIcon} {exam.fileName} ({fileTypeLabel})
-                    {isPast && <span className="pill pill-gray" style={{ marginLeft: 8 }}>Past</span>}
-                    {exam.notified && <span className="pill pill-green" style={{ marginLeft: 8 }}><Bell size={10} /> Notified</span>}
-                  </div>
-                </div>
-                <button className="btn btn-danger btn-sm" onClick={() => removeExam(exam.id)}><Trash2 size={13} /></button>
-              </div>
-
-              <div className="admit-card" style={{ marginBottom: 12 }}>
-                <div className="admit-seal">{exam.subject ? exam.subject.slice(0, 2).toUpperCase() : "EX"}</div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 11.5, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Exam access code</div>
-                  <div className="admit-code">{exam.code}</div>
-                </div>
-                <button className="btn btn-outline btn-sm" onClick={() => copyLink(exam)}><Copy size={13} /> Copy link</button>
-              </div>
-
-              <div style={{ display: "flex", gap: 10 }}>
-                <button className="btn btn-accent btn-sm" onClick={() => notifyStudents(exam)}>
-                  <Send size={13} /> {exam.notified ? "Re-notify students" : "Notify students (email + SMS)"}
-                </button>
-                <button className="btn btn-outline btn-sm" onClick={() => previewFile(exam)}>
-                  <BookOpen size={13} /> Preview {fileTypeLabel} file
-                </button>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {notifications.length > 0 && (
-        <div className="card-plain" style={{ marginTop: 24 }}>
-          <div style={{ fontWeight: 600, marginBottom: 4 }}>Notification log</div>
-          <div className="notice" style={{ marginBottom: 12 }}>
-            <AlertTriangle size={15} style={{ flexShrink: 0, marginTop: 1 }} />
-            <div>These entries simulate what would be sent. Real delivery needs a provider like SendGrid (email) or Twilio (SMS) behind a small backend.</div>
-          </div>
-          <div style={{ maxHeight: 220, overflowY: "auto" }}>
-            <table>
-              <thead><tr><th>Student</th><th>Exam</th><th>Email</th><th>Phone</th><th>Sent</th></tr></thead>
-              <tbody>
-                {notifications.slice().reverse().slice(0, 25).map((n) => (
-                  <tr key={n.id}><td>{n.studentName}</td><td>{n.examTitle}</td><td>{n.email}</td><td className="font-mono">{n.phone}</td><td style={{ color: "var(--muted)" }}>{fmtDateTime(n.sentAt)}</td></tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* ---------------------------------- TakeExamTab ---------------------------------- */
-
-function ExamsTab({ exams, setExams, students, notifications, setNotifications, examPdfUrls, setExamPdf, showToast }) {
-  const [creating, setCreating] = useState(false);
-  const [title, setTitle] = useState("");
-  const [subject, setSubject] = useState("");
-  const [date, setDate] = useState("");
-  const [time, setTime] = useState("");
-  const [duration, setDuration] = useState(30);
   const [file, setFile] = useState(null);
   const [fileType, setFileType] = useState("");
   const [isSaving, setIsSaving] = useState(false);
@@ -1993,6 +1574,589 @@ function ExamsTab({ exams, setExams, students, notifications, setNotifications, 
         </div>
       )}
 
+      <div style={{ display: "grid", gap: 14 }}>
+        {exams.length === 0 && <div className="empty"><ClipboardList size={30} /><div>No exams yet — upload your first question paper above.</div></div>}
+        {exams.slice().reverse().map((exam) => {
+          const isPast = new Date(exam.scheduledAt).getTime() < Date.now();
+          const fileIcon = getFileIcon(exam.fileType || 'pdf');
+          const fileTypeLabel = (exam.fileType || 'pdf').toUpperCase();
+          
+          return (
+            <div key={exam.id} className="card">
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: 16 }}>
+                    {exam.title} {exam.subject && <span className="pill pill-gray">{exam.subject}</span>}
+                  </div>
+                  <div style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 3 }}>
+                    {fmtDateTime(exam.scheduledAt)} · {exam.durationMins} min · {exam.totalQuestions} questions
+                    {isPast && <span className="pill pill-gray" style={{ marginLeft: 8 }}>Past</span>}
+                    {exam.notified && <span className="pill pill-green" style={{ marginLeft: 8 }}><Bell size={10} /> Notified</span>}
+                  </div>
+                  {exam.fileName && (
+                    <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
+                      {fileIcon} {exam.fileName} ({fileTypeLabel})
+                    </div>
+                  )}
+                </div>
+                <button className="btn btn-danger btn-sm" onClick={() => removeExam(exam.id)}><Trash2 size={13} /></button>
+              </div>
+
+              <div className="admit-card" style={{ marginBottom: 12 }}>
+                <div className="admit-seal">{exam.subject ? exam.subject.slice(0, 2).toUpperCase() : "EX"}</div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 11.5, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Exam access code</div>
+                  <div className="admit-code">{exam.code}</div>
+                </div>
+                <button className="btn btn-outline btn-sm" onClick={() => copyLink(exam)}><Copy size={13} /> Copy link</button>
+              </div>
+
+              <div style={{ display: "flex", gap: 10 }}>
+                <button className="btn btn-accent btn-sm" onClick={() => notifyStudents(exam)}>
+                  <Send size={13} /> {exam.notified ? "Re-notify students" : "Notify students"}
+                </button>
+                <button className="btn btn-outline btn-sm" onClick={() => previewFile(exam)}>
+                  <BookOpen size={13} /> Preview file
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {notifications.length > 0 && (
+        <div className="card-plain" style={{ marginTop: 24 }}>
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>Notification log</div>
+          <div style={{ maxHeight: 220, overflowY: "auto" }}>
+            <table>
+              <thead><tr><th>Student</th><th>Exam</th><th>Sent</th></tr></thead>
+              <tbody>
+                {notifications.slice().reverse().slice(0, 25).map((n) => (
+                  <tr key={n.id}><td>{n.studentName}</td><td>{n.examTitle}</td><td style={{ color: "var(--muted)" }}>{fmtDateTime(n.sentAt)}</td></tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------------------------------- TakeExamTab ---------------------------------- */
+
+function ExamsTab({ exams, setExams, students, notifications, setNotifications, examPdfUrls, setExamPdf, showToast }) {
+  const [creating, setCreating] = useState(false);
+  const [title, setTitle] = useState("");
+  const [subject, setSubject] = useState("");
+  const [date, setDate] = useState("");
+  const [time, setTime] = useState("");
+  const [duration, setDuration] = useState(30);
+  const [file, setFile] = useState(null);
+  const [fileType, setFileType] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+  const [extractedQuestions, setExtractedQuestions] = useState([]);
+  const [isExtracting, setIsExtracting] = useState(false);
+  const [totalQuestions, setTotalQuestions] = useState(10);
+  const [answerKey, setAnswerKey] = useState(Array(10).fill(0));
+
+  function changeTotalQuestions(val) {
+    const n = Math.max(1, Math.min(200, Number(val) || 1));
+    setTotalQuestions(n);
+    setAnswerKey((prev) => {
+      const next = prev.slice(0, n);
+      while (next.length < n) next.push(0);
+      return next;
+    });
+  }
+
+  function resetForm() {
+    setTitle(""); 
+    setSubject(""); 
+    setDate(""); 
+    setTime(""); 
+    setDuration(30);
+    setTotalQuestions(10);
+    setAnswerKey(Array(10).fill(0));
+    setFile(null); 
+    setFileType(""); 
+    setCreating(false);
+    setExtractedQuestions([]);
+  }
+
+  // Extract questions from PDF using pdf.js
+  async function extractFromPDF(fileData) {
+    try {
+      console.log('📄 Extracting from PDF...');
+      const pdf = await pdfjsLib.getDocument({ data: fileData }).promise;
+      let fullText = '';
+      
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const textContent = await page.getTextContent();
+        const pageText = textContent.items.map(item => item.str).join(' ');
+        fullText += pageText + '\n';
+      }
+      
+      return parseQuestionsFromText(fullText);
+    } catch (error) {
+      console.error('PDF extraction error:', error);
+      return null;
+    }
+  }
+
+  // Extract questions from DOC using mammoth
+  async function extractFromDOC(fileData) {
+    try {
+      console.log('📄 Extracting from DOC...');
+      const result = await mammoth.extractRawText({ arrayBuffer: fileData });
+      return parseQuestionsFromText(result.value);
+    } catch (error) {
+      console.error('DOC extraction error:', error);
+      return null;
+    }
+  }
+
+  // Parse questions from extracted text
+  function parseQuestionsFromText(text) {
+    const questions = [];
+    const lines = text.split('\n');
+    
+    let currentQuestion = null;
+    let currentOptions = [];
+    let foundQuestions = false;
+    
+    // Patterns for questions
+    const questionPatterns = [
+      /^Q(\d+)[\.\)]\s*(.+)/i,
+      /^(\d+)[\.\)]\s*(.+)/,
+      /^Question\s*(\d+)[\.\)]\s*(.+)/i,
+    ];
+    
+    // Patterns for options
+    const optionPatterns = [
+      /^([A-D])[\.\)]\s*(.+)/,
+      /^([a-d])[\.\)]\s*(.+)/,
+      /^\(([A-D])\)\s*(.+)/,
+    ];
+    
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.length < 2) continue;
+      
+      let isQuestion = false;
+      let questionMatch = null;
+      
+      for (const pattern of questionPatterns) {
+        const match = trimmed.match(pattern);
+        if (match) {
+          questionMatch = match;
+          isQuestion = true;
+          foundQuestions = true;
+          break;
+        }
+      }
+      
+      if (isQuestion && questionMatch) {
+        if (currentQuestion && currentOptions.length > 0) {
+          questions.push({
+            text: currentQuestion,
+            options: currentOptions.slice(0, 4)
+          });
+        }
+        currentQuestion = (questionMatch[2] || questionMatch[1] || trimmed).trim();
+        currentOptions = [];
+      } else {
+        let isOption = false;
+        let optionMatch = null;
+        
+        for (const pattern of optionPatterns) {
+          const match = trimmed.match(pattern);
+          if (match) {
+            optionMatch = match;
+            isOption = true;
+            break;
+          }
+        }
+        
+        if (isOption && optionMatch && currentQuestion) {
+          const optionText = (optionMatch[2] || optionMatch[1] || trimmed).trim();
+          if (optionText.length > 1) {
+            currentOptions.push(optionText);
+          }
+        } else if (currentQuestion && currentOptions.length > 0) {
+          const lastIndex = currentOptions.length - 1;
+          currentOptions[lastIndex] = currentOptions[lastIndex] + ' ' + trimmed;
+        } else if (currentQuestion) {
+          currentQuestion = currentQuestion + ' ' + trimmed;
+        }
+      }
+    }
+    
+    if (currentQuestion && currentOptions.length > 0) {
+      questions.push({
+        text: currentQuestion,
+        options: currentOptions.slice(0, 4)
+      });
+    }
+    
+    console.log(`✅ Found ${questions.length} questions`);
+    return questions;
+  }
+
+  // Handle file upload and extraction
+  async function handleFileUpload(file) {
+    setIsExtracting(true);
+    setExtractedQuestions([]);
+    
+    try {
+      const fileExtension = file.name.split('.').pop().toLowerCase();
+      
+      if (!['pdf', 'doc', 'docx'].includes(fileExtension)) {
+        showToast("Please upload a PDF or DOC file.", "error");
+        setIsExtracting(false);
+        return;
+      }
+      
+      setFile(file);
+      setFileType(fileExtension);
+      
+      const arrayBuffer = await file.arrayBuffer();
+      let extracted = null;
+      
+      if (fileExtension === 'pdf') {
+        extracted = await extractFromPDF(arrayBuffer);
+      } else {
+        extracted = await extractFromDOC(arrayBuffer);
+      }
+      
+      if (extracted && extracted.length > 0) {
+        setExtractedQuestions(extracted);
+        setTotalQuestions(extracted.length);
+        setAnswerKey(Array(extracted.length).fill(0));
+        showToast(`✅ Extracted ${extracted.length} questions from ${file.name}`, "success");
+      } else {
+        showToast("No questions found in the file. Please check the format.", "error");
+      }
+    } catch (error) {
+      console.error('File processing error:', error);
+      showToast("Error processing file: " + error.message, "error");
+    } finally {
+      setIsExtracting(false);
+    }
+  }
+
+  async function saveExam() {
+    if (!title.trim() || !date || !time) { 
+      showToast("Fill in the title, date and time.", "error"); 
+      return; 
+    }
+    
+    if (!file) { 
+      showToast("Upload a question paper (PDF or DOC).", "error"); 
+      return; 
+    }
+    
+    if (extractedQuestions.length === 0) {
+      showToast("No questions extracted. Please upload a valid file.", "error");
+      return;
+    }
+    
+    setIsSaving(true);
+    
+    try {
+      const id = uid();
+      const scheduledAt = new Date(`${date}T${time}`).toISOString();
+      
+      // Convert file to base64 for storage
+      const fileData = await new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (e) => resolve(e.target.result);
+        reader.readAsDataURL(file);
+      });
+      
+      const rec = {
+        id: id,
+        code: genCode(),
+        title: title.trim(),
+        subject: subject.trim() || 'General',
+        scheduledAt: scheduledAt,
+        durationMins: Number(duration) || 30,
+        totalQuestions: extractedQuestions.length,
+        correctAnswers: answerKey,
+        fileName: file.name,
+        fileType: fileType,
+        fileData: fileData,
+        notified: false,
+        createdAt: new Date().toISOString()
+      };
+      
+      // Save exam to Supabase
+      const { data, error } = await supabase
+        .from('exams')
+        .insert([rec])
+        .select();
+      
+      if (error) {
+        console.error('Database error:', error);
+        showToast('Failed to save exam: ' + error.message, 'error');
+        setIsSaving(false);
+        return;
+      }
+      
+      // Save questions to Supabase
+      const questionsData = extractedQuestions.map((q, index) => ({
+        exam_id: id,
+        question_number: index + 1,
+        question_text: q.text,
+        options: q.options || ['A', 'B', 'C', 'D'],
+        correct_answer: answerKey[index] || 0
+      }));
+      
+      const { error: questionError } = await supabase
+        .from('exam_questions')
+        .insert(questionsData);
+      
+      if (questionError) {
+        console.error('Question save error:', questionError);
+        showToast('Warning: Questions saved but error occurred.', 'error');
+      } else {
+        console.log(`✅ ${questionsData.length} questions saved to database`);
+      }
+      
+      // Save to localStorage
+      const updatedExams = [...exams, rec];
+      setExams(updatedExams);
+      await saveKey(STORAGE_KEYS.exams, updatedExams);
+      
+      setExamPdf(id, fileData);
+      resetForm();
+      showToast(`✅ "${rec.title}" scheduled! ${questionsData.length} questions saved. Code: ${rec.code}`);
+    } catch (error) {
+      console.error('Error saving exam:', error);
+      showToast('Failed to save exam: ' + error.message, 'error');
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function removeExam(id) { 
+    try {
+      const { error } = await supabase
+        .from('exams')
+        .delete()
+        .eq('id', id);
+      
+      if (error) throw error;
+      
+      const updated = exams.filter((e) => e.id !== id);
+      setExams(updated);
+      saveKey(STORAGE_KEYS.exams, updated);
+      showToast("Exam removed.");
+    } catch (error) {
+      console.error('Error removing exam:', error);
+      showToast('Failed to remove exam.', 'error');
+    }
+  }
+
+  async function notifyStudents(exam) {
+    if (students.length === 0) { 
+      showToast("Add students first — there's no one to notify yet.", "error"); 
+      return; 
+    }
+    
+    const link = `https://your-school-domain.com/exam/${exam.code}`;
+    const entries = students.map((s) => ({ 
+      id: uid(), 
+      examId: exam.id, 
+      examTitle: exam.title, 
+      studentName: s.name, 
+      email: s.email || s.username + '@example.com', 
+      phone: s.phone, 
+      link, 
+      sentAt: new Date().toISOString() 
+    }));
+    
+    try {
+      const { error } = await supabase
+        .from('exams')
+        .update({ notified: true })
+        .eq('id', exam.id);
+      
+      if (error) throw error;
+      
+      const updated = [...notifications, ...entries];
+      setNotifications(updated);
+      saveKey(STORAGE_KEYS.notifications, updated);
+      
+      const updatedExams = exams.map((e) => (e.id === exam.id ? { ...e, notified: true } : e));
+      setExams(updatedExams);
+      saveKey(STORAGE_KEYS.exams, updatedExams);
+      
+      showToast(`Simulated email + SMS sent to ${students.length} student(s).`);
+    } catch (error) {
+      console.error('Error notifying students:', error);
+      showToast('Failed to notify students.', 'error');
+    }
+  }
+
+  function copyLink(exam) {
+    const link = `https://your-school-domain.com/exam/${exam.code}`;
+    if (navigator.clipboard) navigator.clipboard.writeText(link).catch(() => {});
+    showToast("Exam link copied.");
+  }
+
+  function previewFile(exam) {
+    const url = examPdfUrls[exam.id] || exam.fileData || exam.fileUrl;
+    if (!url) { 
+      showToast("This file isn't available.", "error"); 
+      return; 
+    }
+    window.open(url, "_blank");
+  }
+
+  function getFileIcon(fileType) {
+    if (fileType === 'pdf') return '📄';
+    if (fileType === 'doc' || fileType === 'docx') return '📝';
+    return '📎';
+  }
+
+  return (
+    <div>
+      <div className="page-title font-display">Exams</div>
+      <div className="page-sub">Upload PDF/DOC with questions. Questions will be extracted and saved.</div>
+
+      {!creating ? (
+        <button className="btn btn-primary" style={{ marginBottom: 20 }} onClick={() => setCreating(true)}>
+          <PlusCircle size={15} /> Create new exam
+        </button>
+      ) : (
+        <div className="card" style={{ marginBottom: 24 }}>
+          <div style={{ fontWeight: 600, marginBottom: 14 }}>New Exam</div>
+          
+          <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 0.8fr 0.8fr 0.7fr", gap: 12, marginBottom: 14 }}>
+            <div><label className="field-label">Title</label><input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Unit Test 1" /></div>
+            <div><label className="field-label">Subject</label><input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Chemistry" /></div>
+            <div><label className="field-label">Date</label><input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></div>
+            <div><label className="field-label">Time</label><input type="time" value={time} onChange={(e) => setTime(e.target.value)} /></div>
+            <div><label className="field-label">Duration (min)</label><input type="number" min="5" value={duration} onChange={(e) => setDuration(e.target.value)} /></div>
+          </div>
+
+          {/* File Upload */}
+          <div style={{ marginBottom: 16 }}>
+            <label className="field-label">Question Paper (PDF or DOC/DOCX)</label>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+              <label className="btn btn-outline btn-sm" style={{ cursor: "pointer" }}>
+                <Upload size={13} /> Choose File
+                <input 
+                  type="file" 
+                  accept=".pdf,.doc,.docx" 
+                  style={{ display: "none" }} 
+                  onChange={(e) => {
+                    const selectedFile = e.target.files[0];
+                    if (selectedFile) {
+                      handleFileUpload(selectedFile);
+                    }
+                  }} 
+                />
+              </label>
+              {file && (
+                <span style={{ fontSize: 12.5, color: "var(--muted)" }}>
+                  {getFileIcon(fileType)} {file.name} ({fileType.toUpperCase()})
+                </span>
+              )}
+              {isExtracting && <span style={{ fontSize: 12.5, color: "var(--accent)" }}>⏳ Extracting questions...</span>}
+            </div>
+            <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
+              Supported formats: PDF, DOC, DOCX. Questions should be numbered (1., Q1., etc.) with options (A., B., C., D.)
+            </div>
+          </div>
+
+          {/* Extracted Questions Preview */}
+          {extractedQuestions.length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontWeight: 600, marginBottom: 8 }}>
+                ✅ {extractedQuestions.length} questions extracted
+                <span style={{ fontWeight: 400, fontSize: 12, color: "var(--muted)", marginLeft: 8 }}>
+                  (Scroll to see all)
+                </span>
+              </div>
+              <div style={{ maxHeight: 200, overflowY: "auto", border: "1px solid var(--line)", borderRadius: 8, padding: 12 }}>
+                {extractedQuestions.map((q, index) => (
+                  <div key={index} style={{ 
+                    padding: "6px 0", 
+                    borderBottom: index < extractedQuestions.length - 1 ? "1px solid var(--line)" : "none",
+                    fontSize: 13
+                  }}>
+                    <strong>Q{index + 1}:</strong> {q.text.substring(0, 60)}...
+                    {q.options && q.options.length > 0 && (
+                      <span style={{ color: "var(--muted)", marginLeft: 8 }}>
+                        ({q.options.join(", ")})
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="divider" />
+
+          {/* Answer Key */}
+          <div style={{ fontWeight: 600, marginBottom: 8 }}>Answer Key</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 10, maxHeight: 260, overflowY: "auto", marginBottom: 16 }}>
+            {(extractedQuestions.length > 0 ? extractedQuestions : Array(totalQuestions).fill(null)).map((_, i) => (
+              <div key={i} style={{ border: "1px solid var(--line)", borderRadius: 8, padding: "8px 10px" }}>
+                <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 6, fontWeight: 600 }}>
+                  Question {i + 1}
+                  {extractedQuestions[i] && extractedQuestions[i].text && (
+                    <div style={{ fontSize: 10, color: "var(--muted)", fontWeight: 400, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {extractedQuestions[i].text.substring(0, 30)}...
+                    </div>
+                  )}
+                </div>
+                <div className="ans-grid">
+                  {LETTERS.map((l, oi) => (
+                    <div 
+                      key={oi} 
+                      className={`ans-btn ${answerKey[i] === oi ? "on" : ""}`} 
+                      onClick={() => {
+                        const newKey = [...answerKey];
+                        while (newKey.length <= i) newKey.push(0);
+                        newKey[i] = oi;
+                        setAnswerKey(newKey);
+                      }}
+                    >
+                      {l}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="divider" />
+          <div style={{ display: "flex", gap: 10 }}>
+            <button 
+              className="btn btn-primary" 
+              onClick={saveExam} 
+              disabled={isSaving || isExtracting || extractedQuestions.length === 0}
+            >
+              <CheckCircle2 size={15} /> 
+              {isSaving ? "Saving..." : isExtracting ? "Extracting..." : `Save Exam (${extractedQuestions.length} questions)`}
+            </button>
+            <button className="btn btn-outline" onClick={resetForm}>Cancel</button>
+          </div>
+          {extractedQuestions.length === 0 && file && !isExtracting && (
+            <div className="notice" style={{ marginTop: 12 }}>
+              <AlertTriangle size={14} style={{ flexShrink: 0 }} />
+              <div>No questions were extracted. Make sure your file has numbered questions (1., Q1., etc.) with options (A., B., C., D.)</div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Existing Exams List */}
       <div style={{ display: "grid", gap: 14 }}>
         {exams.length === 0 && <div className="empty"><ClipboardList size={30} /><div>No exams yet — upload your first question paper above.</div></div>}
         {exams.slice().reverse().map((exam) => {
