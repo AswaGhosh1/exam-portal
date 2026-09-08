@@ -1518,7 +1518,7 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
     setShowReview(false);
   }
 
-  async function beginExam() {
+ async function beginExam() {
   const already = results.find((r) => r.examId === exam.id && r.studentId === currentUser.id);
   if (already) { 
     setFinished(already); 
@@ -1534,7 +1534,7 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
   setIsLoading(true);
   
   try {
-    // Load questions from Supabase
+    // First, try to load questions from Supabase
     const { data: questionsData, error: questionsError } = await supabase
       .from('exam_questions')
       .select('*')
@@ -1542,6 +1542,7 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
       .order('question_number');
     
     if (questionsData && questionsData.length > 0) {
+      // Questions found in database - use them
       const parsedQuestions = questionsData.map(q => ({
         id: q.question_number - 1,
         text: q.question_text,
@@ -1549,23 +1550,64 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
         correctAnswer: q.correct_answer
       }));
       setQuestions(parsedQuestions);
-      showToast(`✅ Loaded ${parsedQuestions.length} questions`, "success");
+      showToast(`✅ Loaded ${parsedQuestions.length} questions from database`, "success");
     } else {
-      // Fallback: Create default questions
-      const defaultQuestions = [];
-      for (let i = 0; i < exam.totalQuestions; i++) {
-        defaultQuestions.push({
-          id: i,
-          text: `Question ${i + 1}`,
-          options: ['A', 'B', 'C', 'D'],
-          correctAnswer: exam.correctAnswers ? exam.correctAnswers[i] || 0 : 0
-        });
+      // No questions in database - try to extract from PDF
+      const fileUrl = exam.fileData || examPdfUrls[exam.id];
+      
+      if (fileUrl) {
+        // Try to extract questions from PDF
+        const extractedQuestions = await extractQuestionsFromPDF(fileUrl, exam.totalQuestions);
+        
+        if (extractedQuestions && extractedQuestions.length > 0) {
+          setQuestions(extractedQuestions);
+          showToast(`✅ Extracted ${extractedQuestions.length} questions from PDF`, "success");
+          
+          // Save extracted questions to database for future use
+          try {
+            const questionsToSave = extractedQuestions.map((q, index) => ({
+              exam_id: exam.id,
+              question_number: index + 1,
+              question_text: q.text,
+              options: q.options || ['A', 'B', 'C', 'D'],
+              correct_answer: exam.correctAnswers ? exam.correctAnswers[index] || 0 : 0
+            }));
+            await supabase.from('exam_questions').insert(questionsToSave);
+          } catch (saveError) {
+            console.error('Error saving extracted questions:', saveError);
+          }
+        } else {
+          // Fallback to default questions with instructions
+          const defaultQuestions = [];
+          for (let i = 0; i < exam.totalQuestions; i++) {
+            defaultQuestions.push({
+              id: i,
+              text: `📄 Please read Question ${i + 1} from the PDF viewer above`,
+              options: ['A', 'B', 'C', 'D'],
+              correctAnswer: exam.correctAnswers ? exam.correctAnswers[i] || 0 : 0
+            });
+          }
+          setQuestions(defaultQuestions);
+          showToast("📄 Please read questions from the PDF viewer", "info");
+        }
+      } else {
+        // No PDF available - show default questions
+        const defaultQuestions = [];
+        for (let i = 0; i < exam.totalQuestions; i++) {
+          defaultQuestions.push({
+            id: i,
+            text: `Question ${i + 1}`,
+            options: ['A', 'B', 'C', 'D'],
+            correctAnswer: exam.correctAnswers ? exam.correctAnswers[i] || 0 : 0
+          });
+        }
+        setQuestions(defaultQuestions);
+        showToast("📄 No question paper found. Using default questions.", "info");
       }
-      setQuestions(defaultQuestions);
-      showToast("📄 Using default questions", "info");
     }
   } catch (error) {
     console.error("Error loading questions:", error);
+    // Fallback to default
     const defaultQuestions = [];
     for (let i = 0; i < exam.totalQuestions; i++) {
       defaultQuestions.push({
