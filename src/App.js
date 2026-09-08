@@ -97,15 +97,6 @@ function clearAllData() {
   }
 }
 
-function fileToBase64(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
-
 function fmtDate(d) {
   return new Date(d).toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" });
 }
@@ -276,7 +267,6 @@ export default function App() {
       try {
         console.log('🔄 Loading data from Supabase...');
         
-        // Load all data from Supabase in parallel
         const [studentsResult, facultyResult, examsResult] = await Promise.all([
           supabase.from('students').select('*'),
           supabase.from('faculty_accounts').select('*'),
@@ -287,7 +277,6 @@ export default function App() {
         console.log('📊 Supabase faculty:', facultyResult.data?.length || 0);
         console.log('📊 Supabase exams:', examsResult.data?.length || 0);
         
-        // Use Supabase data if available, otherwise use demo data
         const finalStudents = studentsResult.data?.length > 0 ? studentsResult.data : DEMO_STUDENTS;
         const finalFaculty = facultyResult.data?.length > 0 ? facultyResult.data : DEMO_FACULTY;
         
@@ -295,7 +284,6 @@ export default function App() {
         setFacultyAccounts(finalFaculty);
         setExams(examsResult.data || []);
         
-        // Load other data from localStorage
         const [n, e, a, r, no, ac, se] = await Promise.all([
           loadKey(STORAGE_KEYS.notes, []),
           loadKey(STORAGE_KEYS.exams, []),
@@ -315,10 +303,8 @@ export default function App() {
         setLoading(false);
         
         console.log('✅ Final - Students:', finalStudents.length, 'Faculty:', finalFaculty.length, 'Exams:', examsResult.data?.length || 0);
-        console.log('📝 Source:', studentsResult.data?.length > 0 ? 'Supabase' : 'Demo Data');
       } catch (error) {
         console.error('❌ Error loading data:', error);
-        // Use demo data as fallback
         setStudents(DEMO_STUDENTS);
         setFacultyAccounts(DEMO_FACULTY);
         setLoading(false);
@@ -515,7 +501,6 @@ function LoginScreen({ settings, adminCreds, facultyAccounts, students, onLogin,
 
     if (role === "faculty") {
       try {
-        // Check Supabase first
         const { data, error } = await supabase
           .from('faculty_accounts')
           .select('*')
@@ -537,7 +522,6 @@ function LoginScreen({ settings, adminCreds, facultyAccounts, students, onLogin,
           }
         }
         
-        // Fallback to localStorage
         const acc = facultyAccounts.find(
           (f) => f.username.toLowerCase() === trimmedId.toLowerCase() && f.password === trimmedPassword
         );
@@ -565,7 +549,6 @@ function LoginScreen({ settings, adminCreds, facultyAccounts, students, onLogin,
 
     // STUDENT LOGIN
     try {
-      // Check Supabase first
       const { data, error } = await supabase
         .from('students')
         .select('*')
@@ -587,7 +570,6 @@ function LoginScreen({ settings, adminCreds, facultyAccounts, students, onLogin,
         }
       }
       
-      // Fallback to localStorage
       const student = students.find(
         (st) => st.username.toLowerCase() === trimmedId.toLowerCase() && st.password === trimmedPassword
       );
@@ -806,7 +788,6 @@ function LoginScreen({ settings, adminCreds, facultyAccounts, students, onLogin,
   );
 }
 
-
 /* ---------------------------------- Dashboard ---------------------------------- */
 
 function Dashboard({ students, exams, notes, attendance, results, currentUser, setTab }) {
@@ -896,7 +877,7 @@ function StudentsTab({ students, setStudents, showToast }) {
   const [password, setPassword] = useState(genPin());
   const [search, setSearch] = useState("");
 
-  function addStudent() {
+  async function addStudent() {
     if (!name.trim() || !username.trim() || !phone.trim() || !password.trim()) {
       showToast("Fill in name, username, phone and a password.", "error"); 
       return; 
@@ -914,17 +895,42 @@ function StudentsTab({ students, setStudents, showToast }) {
       password: password.trim(), 
       addedAt: new Date().toISOString() 
     };
-    setStudents([...students, rec]);
-    setName(""); 
-    setUsername(""); 
-    setPhone(""); 
-    setPassword(genPin());
-    showToast(`${rec.name} added — share their login (username + password) with them.`);
+    
+    try {
+      const { data, error } = await supabase
+        .from('students')
+        .insert([rec])
+        .select();
+      
+      if (error) throw error;
+      
+      setStudents([...students, rec]);
+      setName(""); 
+      setUsername(""); 
+      setPhone(""); 
+      setPassword(genPin());
+      showToast(`${rec.name} added — share their login (username + password) with them.`);
+    } catch (error) {
+      console.error('Error adding student:', error);
+      showToast('Failed to add student: ' + error.message, 'error');
+    }
   }
   
-  function removeStudent(id) { 
-    setStudents(students.filter((s) => s.id !== id)); 
-    showToast("Student removed."); 
+  async function removeStudent(id) {
+    try {
+      const { error } = await supabase
+        .from('students')
+        .delete()
+        .eq('id', id);
+      
+      if (error) throw error;
+      
+      setStudents(students.filter((s) => s.id !== id)); 
+      showToast("Student removed.");
+    } catch (error) {
+      console.error('Error removing student:', error);
+      showToast('Failed to remove student.', 'error');
+    }
   }
 
   const filtered = students.filter((s) => 
@@ -1091,106 +1097,116 @@ function ExamsTab({ exams, setExams, students, notifications, setNotifications, 
     setTotalQuestions(10); setAnswerKey(Array(10).fill(0)); setFile(null); setFileType(""); setCreating(false);
   }
 
-async function saveExam() {
-  if (!title.trim() || !date || !time) { 
-    showToast("Fill in the title, date and time.", "error"); 
-    return; 
-  }
-  
-  if (!file) { 
-    showToast("Upload the question paper (PDF or DOC).", "error"); 
-    return; 
-  }
-  
-  const fileExtension = file.name.split('.').pop().toLowerCase();
-  const allowedTypes = ['pdf', 'doc', 'docx'];
-  if (!allowedTypes.includes(fileExtension)) {
-    showToast(`Please upload a PDF or DOC file.`, "error");
-    return;
-  }
-  
-  setIsSaving(true);
-  
-  try {
-    // Step 1: Upload file to Supabase Storage
-    const filePath = `exams/${uid()}/${file.name}`;
-    const { data: uploadData, error: uploadError } = await supabase.storage
-      .from('exam-files')
-      .upload(filePath, file);
+  async function saveExam() {
+    if (!title.trim() || !date || !time) { 
+      showToast("Fill in the title, date and time.", "error"); 
+      return; 
+    }
     
-    if (uploadError) {
-      console.error('Upload error:', uploadError);
-      showToast('Failed to upload file: ' + uploadError.message, 'error');
-      setIsSaving(false);
+    if (!file) { 
+      showToast("Upload the question paper (PDF or DOC).", "error"); 
+      return; 
+    }
+    
+    const fileExtension = file.name.split('.').pop().toLowerCase();
+    const allowedTypes = ['pdf', 'doc', 'docx'];
+    if (!allowedTypes.includes(fileExtension)) {
+      showToast(`Please upload a PDF or DOC file.`, "error");
       return;
     }
     
-    console.log('✅ File uploaded:', uploadData);
+    setIsSaving(true);
     
-    // Step 2: Get public URL
-    const { data: { publicUrl } } = supabase.storage
-      .from('exam-files')
-      .getPublicUrl(filePath);
-    
-    console.log('🔗 Public URL:', publicUrl);
-    
-    // Step 3: Save exam metadata to database
-    const scheduledAt = new Date(`${date}T${time}`).toISOString();
-    const id = uid();
-    
-    const rec = {
-      id: id,
-      code: genCode(),
-      title: title.trim(),
-      subject: subject.trim(),
-      scheduledAt: scheduledAt,
-      durationMins: Number(duration) || 30,
-      totalQuestions: totalQuestions,
-      correctAnswers: answerKey,
-      fileName: file.name,
-      fileType: fileExtension,
-      fileData: publicUrl,  // Store URL instead of base64
-      notified: false,
-      createdAt: new Date().toISOString()
-    };
-    
-    const { data, error } = await supabase
-      .from('exams')
-      .insert([rec])
-      .select();
-    
-    if (error) {
-      console.error('Database error:', error);
+    try {
+      // Upload file to Supabase Storage
+      const filePath = `exams/${uid()}/${file.name}`;
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from('exam-files')
+        .upload(filePath, file);
+      
+      if (uploadError) {
+        console.error('Upload error:', uploadError);
+        showToast('Failed to upload file: ' + uploadError.message, 'error');
+        setIsSaving(false);
+        return;
+      }
+      
+      const { data: { publicUrl } } = supabase.storage
+        .from('exam-files')
+        .getPublicUrl(filePath);
+      
+      const scheduledAt = new Date(`${date}T${time}`).toISOString();
+      const id = uid();
+      
+      const rec = {
+        id: id,
+        code: genCode(),
+        title: title.trim(),
+        subject: subject.trim(),
+        scheduledAt: scheduledAt,
+        durationMins: Number(duration) || 30,
+        totalQuestions: totalQuestions,
+        correctAnswers: answerKey,
+        fileName: file.name,
+        fileType: fileExtension,
+        fileUrl: publicUrl,
+        notified: false,
+        createdAt: new Date().toISOString()
+      };
+      
+      const { data, error } = await supabase
+        .from('exams')
+        .insert([rec])
+        .select();
+      
+      if (error) {
+        console.error('Database error:', error);
+        showToast('Failed to save exam: ' + error.message, 'error');
+        setIsSaving(false);
+        return;
+      }
+      
+      // Save questions to Supabase
+      const questionsData = [];
+      for (let i = 0; i < totalQuestions; i++) {
+        questionsData.push({
+          exam_id: id,
+          question_number: i + 1,
+          question_text: `Question ${i + 1}`,
+          options: ['A', 'B', 'C', 'D'],
+          correct_answer: answerKey[i] || 0
+        });
+      }
+      
+      const { error: questionError } = await supabase
+        .from('exam_questions')
+        .insert(questionsData);
+      
+      if (questionError) {
+        console.error('Question save error:', questionError);
+      }
+      
+      // Set blob URL for viewing
+      const blob = new Blob([file], { type: file.type || 'application/octet-stream' });
+      const blobUrl = URL.createObjectURL(blob);
+      setExamPdf(id, blobUrl);
+      
+      const updatedExams = [...exams, rec];
+      setExams(updatedExams);
+      await saveKey(STORAGE_KEYS.exams, updatedExams);
+      
+      resetForm();
+      showToast(`✅ "${rec.title}" scheduled! File uploaded to cloud. Code: ${rec.code}`);
+    } catch (error) {
+      console.error('Error saving exam:', error);
       showToast('Failed to save exam: ' + error.message, 'error');
+    } finally {
       setIsSaving(false);
-      return;
     }
-    
-    console.log('✅ Exam saved:', data);
-    
-    // Set blob URL for viewing
-    const blob = new Blob([file], { type: file.type || 'application/octet-stream' });
-    const blobUrl = URL.createObjectURL(blob);
-    setExamPdf(id, blobUrl);
-    
-    const updatedExams = [...exams, rec];
-    setExams(updatedExams);
-    await saveKey(STORAGE_KEYS.exams, updatedExams);
-    
-    resetForm();
-    showToast(`"${rec.title}" scheduled! File uploaded to cloud. Code: ${rec.code}`);
-  } catch (error) {
-    console.error('Error saving exam:', error);
-    showToast('Failed to save exam: ' + error.message, 'error');
-  } finally {
-    setIsSaving(false);
   }
-}
-
 
   async function removeExam(id) { 
     try {
-      // Delete from Supabase
       const { error } = await supabase
         .from('exams')
         .delete()
@@ -1198,7 +1214,6 @@ async function saveExam() {
       
       if (error) throw error;
       
-      // Update local state
       const updated = exams.filter((e) => e.id !== id);
       setExams(updated);
       saveKey(STORAGE_KEYS.exams, updated);
@@ -1228,7 +1243,6 @@ async function saveExam() {
     }));
     
     try {
-      // Update exam notification status in Supabase
       const { error } = await supabase
         .from('exams')
         .update({ notified: true })
@@ -1258,7 +1272,7 @@ async function saveExam() {
   }
 
   function previewFile(exam) {
-    const url = examPdfUrls[exam.id];
+    const url = examPdfUrls[exam.id] || exam.fileUrl;
     if (!url) { 
       showToast("This file isn't available in the current browser session.", "error"); 
       return; 
@@ -1334,11 +1348,7 @@ async function saveExam() {
               <input type="number" min="1" value={totalQuestions} onChange={(e) => changeTotalQuestions(e.target.value)} />
             </div>
             <div style={{ fontSize: 12.5, color: "var(--muted)" }}>
-              {fileType === 'pdf' ? (
-                "Students will read questions from the PDF and select answers below."
-              ) : (
-                "Students will read questions from the document viewer and select answers below."
-              )}
+              Students will answer questions based on the PDF content
             </div>
           </div>
 
@@ -1435,6 +1445,8 @@ async function saveExam() {
   );
 }
 
+/* ---------------------------------- Take Exam ---------------------------------- */
+
 function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, showToast }) {
   const [code, setCode] = useState("");
   const [exam, setExam] = useState(null);
@@ -1444,14 +1456,10 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
   const [secondsLeft, setSecondsLeft] = useState(0);
   const [finished, setFinished] = useState(null);
   const [showConfirmFinish, setShowConfirmFinish] = useState(false);
-  const [pdfQuestions, setPdfQuestions] = useState([]);
-  const [isLoadingPdf, setIsLoadingPdf] = useState(false);
-  const [pdfError, setPdfError] = useState(false);
-  const [fileType, setFileType] = useState("pdf");
+  const [questions, setQuestions] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
   const [showReview, setShowReview] = useState(false);
   const [reviewIndex, setReviewIndex] = useState(0);
-  const [showPdfViewer, setShowPdfViewer] = useState(true); // CHANGED: Default to visible
-  const [extractedText, setExtractedText] = useState(""); // NEW: Store extracted text
 
   useEffect(() => {
     if (!started || finished) return;
@@ -1462,18 +1470,13 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
 
   function findExam() {
     const found = exams.find((e) => e.code.toUpperCase() === code.trim().toUpperCase());
-    if (!found) { showToast("No exam found with that code.", "error"); return; }
-    setExam(found);
-    setPdfQuestions([]);
-    setPdfError(false);
-    setShowReview(false);
-    setExtractedText(""); // Reset extracted text
-    if (found.fileType) {
-      setFileType(found.fileType);
-    } else {
-      const ext = found.fileName ? found.fileName.split('.').pop().toLowerCase() : 'pdf';
-      setFileType(ext);
+    if (!found) { 
+      showToast("No exam found with that code.", "error"); 
+      return; 
     }
+    setExam(found);
+    setQuestions([]);
+    setShowReview(false);
   }
 
   async function beginExam() {
@@ -1488,182 +1491,55 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
     setQIndex(0); 
     setSecondsLeft(exam.durationMins * 60); 
     setStarted(true);
-    setPdfError(false);
     setShowReview(false);
-    setShowPdfViewer(true); // Show PDF viewer by default
-    setExtractedText("");
-    
-    // Create default questions
-    const defaultQuestions = [];
-    for (let i = 0; i < exam.totalQuestions; i++) {
-      defaultQuestions.push({
-        id: i,
-        text: `Question ${i + 1}`,
-        options: ['A', 'B', 'C', 'D']
-      });
-    }
-    setPdfQuestions(defaultQuestions);
-    
-    // Try to extract from file if available
-    const fileUrl = examPdfUrls[exam.id] || exam.fileData;
-    if (fileUrl) {
-      try {
-        await extractQuestionsFromFile(fileUrl, defaultQuestions);
-      } catch (e) {
-        console.log("File extraction failed, using default questions");
-      }
-    }
-  }
-
-  async function extractQuestionsFromFile(fileUrl, defaultQuestions) {
-    setIsLoadingPdf(true);
-    setPdfError(false);
+    setIsLoading(true);
     
     try {
-      const response = await fetch(fileUrl);
-      const blob = await response.blob();
+      // Load questions from Supabase
+      const { data: questionsData, error: questionsError } = await supabase
+        .from('exam_questions')
+        .select('*')
+        .eq('exam_id', exam.id)
+        .order('question_number');
       
-      const fileExtension = fileUrl.split('.').pop().toLowerCase();
-      const isDoc = fileExtension === 'doc' || fileExtension === 'docx' || 
-                     blob.type === 'application/msword' || 
-                     blob.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-      
-      let text = '';
-      
-      if (isDoc) {
-        try {
-          const mammoth = await import('mammoth');
-          const arrayBuffer = await blob.arrayBuffer();
-          const result = await mammoth.extractRawText({ arrayBuffer });
-          text = result.value || '';
-        } catch (e) {
-          console.log("Mammoth failed");
-        }
+      if (questionsData && questionsData.length > 0) {
+        const parsedQuestions = questionsData.map(q => ({
+          id: q.question_number - 1,
+          text: q.question_text,
+          options: q.options || ['A', 'B', 'C', 'D'],
+          correctAnswer: q.correct_answer
+        }));
+        setQuestions(parsedQuestions);
+        showToast(`✅ Loaded ${parsedQuestions.length} questions`, "success");
       } else {
-        // For PDF, use a simpler approach - just show the PDF
-        // We'll display the PDF directly instead of trying to parse
-        text = "📄 Please refer to the PDF viewer below for questions.";
-      }
-      
-      setExtractedText(text);
-      
-      if (text && text.trim().length > 10 && !text.includes("PDF viewer")) {
-        const parsedQuestions = parseQuestionsImproved(text, exam.totalQuestions);
-        if (parsedQuestions.length > 0) {
-          setPdfQuestions(parsedQuestions);
-          showToast(`✅ Extracted ${parsedQuestions.length} questions from document`, "success");
-          return;
-        }
-      }
-      
-      // If extraction failed, use default questions
-      setPdfQuestions(defaultQuestions);
-      if (fileExtension === 'pdf') {
-        showToast("📄 Read questions from the PDF viewer below", "info");
-      } else {
-        showToast("📄 Using default question numbers. Read from the document viewer.", "info");
-      }
-    } catch (error) {
-      console.log("Text extraction failed, using default questions");
-      setPdfQuestions(defaultQuestions);
-      setPdfError(true);
-    } finally {
-      setIsLoadingPdf(false);
-    }
-  }
-
-  function parseQuestionsImproved(text, totalQuestions) {
-    const questions = [];
-    let cleanText = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-    cleanText = cleanText.replace(/\n{3,}/g, '\n\n');
-    
-    const lines = cleanText.split('\n');
-    let currentQuestion = null;
-    let currentOptions = [];
-    
-    const questionPatterns = [
-      /^(\d+)[\.\)]\s*(.+)/,
-      /^Q(\d+)[\.\)]\s*(.+)/i,
-      /^Question\s*(\d+)[\.\)]\s*(.+)/i,
-    ];
-    
-    const optionPatterns = [
-      /^([A-D])[\.\)]\s*(.+)/,
-      /^([a-d])[\.\)]\s*(.+)/,
-      /^\(([A-D])\)\s*(.+)/,
-    ];
-    
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i].trim();
-      if (!line) continue;
-      if (/^[\-\=\_\.\s\|\:\;]+$/.test(line)) continue;
-      
-      let isQuestion = false;
-      let questionMatch = null;
-      
-      for (const pattern of questionPatterns) {
-        const match = line.match(pattern);
-        if (match) {
-          questionMatch = match;
-          isQuestion = true;
-          break;
-        }
-      }
-      
-      if (isQuestion && questionMatch) {
-        if (currentQuestion && currentOptions.length > 0) {
-          questions.push({
-            id: questions.length,
-            text: currentQuestion,
-            options: currentOptions.slice(0, 4)
+        // Fallback: Create default questions
+        const defaultQuestions = [];
+        for (let i = 0; i < exam.totalQuestions; i++) {
+          defaultQuestions.push({
+            id: i,
+            text: `Question ${i + 1}`,
+            options: ['A', 'B', 'C', 'D'],
+            correctAnswer: exam.correctAnswers[i] || 0
           });
         }
-        currentQuestion = (questionMatch[2] || questionMatch[1] || line).trim();
-        currentOptions = [];
-      } else {
-        let isOption = false;
-        let optionMatch = null;
-        
-        for (const pattern of optionPatterns) {
-          const match = line.match(pattern);
-          if (match) {
-            optionMatch = match;
-            isOption = true;
-            break;
-          }
-        }
-        
-        if (isOption && optionMatch && currentQuestion) {
-          const optionText = (optionMatch[2] || optionMatch[1] || line).trim();
-          currentOptions.push(optionText);
-        } else if (currentQuestion && currentOptions.length > 0) {
-          const lastIndex = currentOptions.length - 1;
-          currentOptions[lastIndex] = currentOptions[lastIndex] + ' ' + line;
-        } else if (currentQuestion) {
-          currentQuestion = currentQuestion + ' ' + line;
-        }
+        setQuestions(defaultQuestions);
+        showToast("📄 Using default questions", "info");
       }
-    }
-    
-    if (currentQuestion && currentOptions.length > 0) {
-      questions.push({
-        id: questions.length,
-        text: currentQuestion,
-        options: currentOptions.slice(0, 4)
-      });
-    }
-    
-    if (questions.length === 0) {
-      for (let i = 0; i < Math.min(totalQuestions, 100); i++) {
-        questions.push({
+    } catch (error) {
+      console.error("Error loading questions:", error);
+      const defaultQuestions = [];
+      for (let i = 0; i < exam.totalQuestions; i++) {
+        defaultQuestions.push({
           id: i,
           text: `Question ${i + 1}`,
-          options: ['A', 'B', 'C', 'D']
+          options: ['A', 'B', 'C', 'D'],
+          correctAnswer: exam.correctAnswers[i] || 0
         });
       }
+      setQuestions(defaultQuestions);
+    } finally {
+      setIsLoading(false);
     }
-    
-    return questions.slice(0, totalQuestions);
   }
 
   function selectAnswer(oi) { 
@@ -1721,28 +1597,23 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
     setSecondsLeft(0); 
     setFinished(null); 
     setShowConfirmFinish(false);
-    setPdfQuestions([]);
-    setPdfError(false);
+    setQuestions([]);
     setShowReview(false);
     setReviewIndex(0);
-    setShowPdfViewer(false);
-    setExtractedText("");
   }
 
-  // Review mode (unchanged)
+  // Review mode
   if (showReview && finished) {
-    // ... (keep your existing review code)
     const pct = Math.round((finished.score / finished.total) * 100);
-    const questions = pdfQuestions.length > 0 ? pdfQuestions : 
+    const currentQuestions = questions.length > 0 ? questions : 
       Array.from({ length: exam.totalQuestions }, (_, i) => ({
         id: i,
         text: `Question ${i + 1}`,
         options: ['A', 'B', 'C', 'D']
       }));
     
-    const totalAnswered = finished.questionResults ? finished.questionResults.filter(r => r.userAnswer !== undefined).length : 0;
     const currentReview = finished.questionResults ? finished.questionResults[reviewIndex] : null;
-    const currentQuestion = questions[reviewIndex] || questions[0];
+    const currentQuestion = currentQuestions[reviewIndex] || currentQuestions[0];
 
     return (
       <div>
@@ -1916,23 +1787,22 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
     );
   }
 
-  // MAIN EXAM VIEW - This is where the fix is
+  // MAIN EXAM VIEW - Questions displayed inline
   if (started && exam) {
     const isLast = qIndex === exam.totalQuestions - 1;
     const mm = Math.floor(secondsLeft / 60);
     const ss = secondsLeft % 60;
     const low = secondsLeft <= 30;
     const totalAnswered = Object.keys(answers).length;
-    const pdfUrl = examPdfUrls[exam.id] || exam.fileData;
     
-    const questions = pdfQuestions.length > 0 ? pdfQuestions : 
+    const currentQuestions = questions.length > 0 ? questions : 
       Array.from({ length: exam.totalQuestions }, (_, i) => ({
         id: i,
         text: `Question ${i + 1}`,
         options: ['A', 'B', 'C', 'D']
       }));
 
-    const currentQuestion = questions[qIndex] || questions[0];
+    const currentQuestion = currentQuestions[qIndex] || currentQuestions[0];
 
     return (
       <div>
@@ -1944,7 +1814,7 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
               <span style={{ marginLeft: 12, color: "var(--muted)" }}>
                 • Answered: {totalAnswered}/{exam.totalQuestions}
               </span>
-              {isLoadingPdf && <span style={{ marginLeft: 12, color: "var(--accent)" }}>⏳ Extracting questions...</span>}
+              {isLoading && <span style={{ marginLeft: 12, color: "var(--accent)" }}>⏳ Loading questions...</span>}
             </div>
           </div>
           <div className={`timer-badge ${low ? "low" : ""}`}><Timer size={16} /> {pad(mm)}:{pad(ss)}</div>
@@ -1957,83 +1827,39 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
           ))}
         </div>
 
-        {/* PDF VIEWER - ALWAYS VISIBLE AND EXPANDED */}
-        {pdfUrl && (
+        {/* PDF Viewer - Optional, below questions */}
+        {exam.fileUrl && (
           <div style={{ marginBottom: 16 }}>
-            <div style={{ 
-              display: "flex", 
-              justifyContent: "space-between", 
-              alignItems: "center",
-              marginBottom: 8,
-              background: "var(--primary)",
-              color: "#fff",
-              padding: "8px 14px",
-              borderRadius: "8px 8px 0 0"
-            }}>
-              <span style={{ fontWeight: 600, fontSize: 14 }}>
-                📄 Question Paper ({fileType.toUpperCase()}) 
-                {isLoadingPdf && <span style={{ marginLeft: 8, fontSize: 12, opacity: 0.8 }}>⏳ loading...</span>}
-              </span>
-              <button 
-                className="btn btn-sm" 
-                style={{ 
-                  background: "rgba(255,255,255,0.15)", 
-                  color: "#fff", 
-                  border: "none",
-                  padding: "4px 12px",
-                  cursor: "pointer",
-                  borderRadius: "4px"
-                }}
-                onClick={() => setShowPdfViewer(!showPdfViewer)}
-              >
-                {showPdfViewer ? '🔼 Hide' : '🔽 Show'}
-              </button>
-            </div>
-            {showPdfViewer && (
-              <div className="card" style={{ 
-                overflow: "hidden", 
-                padding: 0,
-                borderRadius: "0 0 8px 8px",
-                borderTop: "none",
-                minHeight: 300
+            <details style={{ cursor: "pointer" }}>
+              <summary style={{ 
+                padding: "8px 14px", 
+                background: "var(--paper)", 
+                borderRadius: "8px",
+                fontWeight: 600,
+                fontSize: 13,
+                color: "var(--ink-soft)"
               }}>
+                📄 View Question Paper PDF (for reference)
+              </summary>
+              <div style={{ marginTop: 8 }}>
                 <iframe 
                   title="question-paper" 
-                  src={`${pdfUrl}#toolbar=1&navpanes=1`} 
+                  src={exam.fileUrl}
                   className="pdf-frame" 
                   style={{ 
-                    height: 450, 
+                    height: 300, 
                     width: "100%",
-                    border: "none",
+                    border: "1px solid var(--line)",
+                    borderRadius: "8px",
                     background: "#f5f5f0"
                   }}
                 />
-                <div style={{ 
-                  padding: "8px 14px", 
-                  background: "var(--paper)", 
-                  fontSize: 11, 
-                  color: "var(--muted)",
-                  borderTop: "1px solid var(--line)",
-                  display: "flex",
-                  justifyContent: "space-between"
-                }}>
-                  <span>📌 Scroll through the PDF to read all questions</span>
-                  <span>{exam.fileName || "Question Paper"}</span>
-                </div>
               </div>
-            )}
+            </details>
           </div>
         )}
 
-        {/* If no PDF URL, show a message */}
-        {!pdfUrl && (
-          <div className="notice" style={{ marginBottom: 16, background: "#fef3e2" }}>
-            <AlertTriangle size={15} style={{ flexShrink: 0 }} />
-            <div>⚠️ The question paper file is not available. Please contact your faculty.</div>
-          </div>
-        )}
-
-        {/* QUESTION AS TEXT - ALWAYS VISIBLE */}
+        {/* QUESTION - Displayed inline */}
         <div className="card" style={{ maxWidth: 800, margin: "0 auto" }}>
           <div style={{ fontWeight: 600, marginBottom: 12, fontSize: 18 }}>
             Question {qIndex + 1}
@@ -2044,7 +1870,7 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
             )}
           </div>
           
-          {/* Question Text - Always shown */}
+          {/* Question Text */}
           <div style={{ 
             marginBottom: 20, 
             padding: 16, 
@@ -2071,7 +1897,6 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
               );
             })
           ) : (
-            // Fallback if no options extracted
             LETTERS.slice(0, 4).map((l, oi) => (
               <div key={oi} className={`option-row ${answers[qIndex] === oi ? "selected" : ""}`} onClick={() => selectAnswer(oi)} style={{ padding: "14px 16px" }}>
                 <div className="option-letter" style={{ width: 30, height: 30, fontSize: 14 }}>{l}</div>
@@ -2083,8 +1908,7 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
 
           <div style={{ marginTop: 16, fontSize: 12, color: "var(--muted)", textAlign: "center" }}>
             {qIndex + 1} of {exam.totalQuestions} questions
-            {pdfQuestions.length > 0 && ` • ${pdfQuestions.length} questions loaded`}
-            {pdfError && <span style={{ color: "var(--danger)", display: "block", marginTop: 4 }}>⚠️ Could not extract questions. Please read from PDF.</span>}
+            {questions.length > 0 && ` • ${questions.length} questions loaded`}
           </div>
         </div>
 
@@ -2198,7 +2022,7 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
             </div>
             <div className="notice" style={{ marginTop: 12 }}>
               <AlertTriangle size={14} style={{ flexShrink: 0 }} />
-              <div>The question paper will be shown as a PDF viewer. Read the questions from there.</div>
+              <div>Questions will appear here. You can also view the PDF for reference.</div>
             </div>
           </>
         )}
@@ -2306,12 +2130,10 @@ function ResultsTab({ exams, results, currentUser }) {
     .filter((r) => isStudent || r.studentName.toLowerCase().includes(search.toLowerCase()))
     .sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
 
-  // Get exam details for a result
   const getExamForResult = (result) => {
     return exams.find(e => e.id === result.examId);
   };
 
-  // Get questions for an exam
   const getQuestionsForExam = (exam) => {
     if (!exam) return [];
     return Array.from({ length: exam.totalQuestions || 0 }, (_, i) => ({
@@ -2331,7 +2153,6 @@ function ResultsTab({ exams, results, currentUser }) {
     setSelectedResult(null);
   };
 
-  // Detailed view of correct answers
   if (showDetailedView && selectedResult) {
     const exam = getExamForResult(selectedResult);
     const questions = getQuestionsForExam(exam);
@@ -2375,7 +2196,6 @@ function ResultsTab({ exams, results, currentUser }) {
           </div>
         </div>
 
-        {/* Questions with Correct Answers */}
         <div style={{ maxHeight: "500px", overflowY: "auto" }}>
           {Array.from({ length: totalQuestions }).map((_, index) => {
             const userAnswer = selectedResult.questionResults && selectedResult.questionResults[index] 
@@ -2581,22 +2401,47 @@ function AdminPanel({ settings, setSettings, adminCreds, setAdminCreds, facultyA
     showToast("Site settings updated.");
   }
 
-  function addFaculty() {
+  async function addFaculty() {
     if (!facName.trim() || !facUsername.trim() || !facPassword.trim()) { showToast("Fill in name, username and password.", "error"); return; }
     if (facultyAccounts.some((f) => f.username.toLowerCase() === facUsername.trim().toLowerCase())) { showToast("That username is already taken.", "error"); return; }
     const rec = { id: uid(), name: facName.trim(), username: facUsername.trim(), password: facPassword.trim(), addedAt: new Date().toISOString() };
-    const updated = [...facultyAccounts, rec];
-    setFacultyAccounts(updated);
-    saveKey(STORAGE_KEYS.facultyAccounts, updated);
-    setFacName(""); setFacUsername(""); setFacPassword(genPin());
-    showToast(`Faculty account created for ${rec.name}.`);
+    
+    try {
+      const { data, error } = await supabase
+        .from('faculty_accounts')
+        .insert([rec])
+        .select();
+      
+      if (error) throw error;
+      
+      const updated = [...facultyAccounts, rec];
+      setFacultyAccounts(updated);
+      saveKey(STORAGE_KEYS.facultyAccounts, updated);
+      setFacName(""); setFacUsername(""); setFacPassword(genPin());
+      showToast(`Faculty account created for ${rec.name}.`);
+    } catch (error) {
+      console.error('Error adding faculty:', error);
+      showToast('Failed to add faculty: ' + error.message, 'error');
+    }
   }
   
-  function removeFaculty(id) { 
-    const updated = facultyAccounts.filter((f) => f.id !== id);
-    setFacultyAccounts(updated);
-    saveKey(STORAGE_KEYS.facultyAccounts, updated);
-    showToast("Faculty removed.");
+  async function removeFaculty(id) { 
+    try {
+      const { error } = await supabase
+        .from('faculty_accounts')
+        .delete()
+        .eq('id', id);
+      
+      if (error) throw error;
+      
+      const updated = facultyAccounts.filter((f) => f.id !== id);
+      setFacultyAccounts(updated);
+      saveKey(STORAGE_KEYS.facultyAccounts, updated);
+      showToast("Faculty removed.");
+    } catch (error) {
+      console.error('Error removing faculty:', error);
+      showToast('Failed to remove faculty.', 'error');
+    }
   }
 
   function changeAdminPassword() {
