@@ -1518,112 +1518,222 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
     setShowReview(false);
   }
 
- async function beginExam() {
-  const already = results.find((r) => r.examId === exam.id && r.studentId === currentUser.id);
-  if (already) { 
-    setFinished(already); 
-    setShowReview(true);
-    return; 
-  }
-  
-  setAnswers({}); 
-  setQIndex(0); 
-  setSecondsLeft(exam.durationMins * 60); 
-  setStarted(true);
-  setShowReview(false);
-  setIsLoading(true);
-  
-  try {
-    // First, try to load questions from Supabase
-    const { data: questionsData, error: questionsError } = await supabase
-      .from('exam_questions')
-      .select('*')
-      .eq('exam_id', exam.id)
-      .order('question_number');
-    
-    if (questionsData && questionsData.length > 0) {
-      // Questions found in database - use them
-      const parsedQuestions = questionsData.map(q => ({
-        id: q.question_number - 1,
-        text: q.question_text,
-        options: q.options || ['A', 'B', 'C', 'D'],
-        correctAnswer: q.correct_answer
-      }));
-      setQuestions(parsedQuestions);
-      showToast(`✅ Loaded ${parsedQuestions.length} questions from database`, "success");
-    } else {
-      // No questions in database - try to extract from PDF
-      const fileUrl = exam.fileData || examPdfUrls[exam.id];
+  // Extract questions from PDF file - DEFINED BEFORE beginExam
+  async function extractQuestionsFromPDF(fileUrl, totalQuestions) {
+    try {
+      console.log('📄 Attempting to extract questions from PDF...');
       
-      if (fileUrl) {
-        // Try to extract questions from PDF
-        const extractedQuestions = await extractQuestionsFromPDF(fileUrl, exam.totalQuestions);
+      // Fetch the PDF file
+      const response = await fetch(fileUrl);
+      const blob = await response.blob();
+      
+      // Try to read text from the PDF
+      try {
+        const text = await blob.text();
         
-        if (extractedQuestions && extractedQuestions.length > 0) {
-          setQuestions(extractedQuestions);
-          showToast(`✅ Extracted ${extractedQuestions.length} questions from PDF`, "success");
+        // Look for question patterns
+        const questions = [];
+        const lines = text.split('\n');
+        
+        let currentQuestion = null;
+        let currentOptions = [];
+        
+        // Patterns to match
+        const questionPatterns = [
+          /^(\d+)[\.\)]\s*(.+)/,  // "1. Question text"
+          /^Q(\d+)[\.\)]\s*(.+)/i, // "Q1. Question text"
+          /^Question\s*(\d+)[\.\)]\s*(.+)/i, // "Question 1. Question text"
+        ];
+        
+        const optionPatterns = [
+          /^([A-D])[\.\)]\s*(.+)/, // "A. Option text"
+          /^([a-d])[\.\)]\s*(.+)/, // "a. Option text"
+        ];
+        
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
           
-          // Save extracted questions to database for future use
-          try {
-            const questionsToSave = extractedQuestions.map((q, index) => ({
-              exam_id: exam.id,
-              question_number: index + 1,
-              question_text: q.text,
-              options: q.options || ['A', 'B', 'C', 'D'],
-              correct_answer: exam.correctAnswers ? exam.correctAnswers[index] || 0 : 0
-            }));
-            await supabase.from('exam_questions').insert(questionsToSave);
-          } catch (saveError) {
-            console.error('Error saving extracted questions:', saveError);
+          let isQuestion = false;
+          let questionMatch = null;
+          
+          for (const pattern of questionPatterns) {
+            const match = trimmed.match(pattern);
+            if (match) {
+              questionMatch = match;
+              isQuestion = true;
+              break;
+            }
+          }
+          
+          if (isQuestion && questionMatch) {
+            // Save previous question
+            if (currentQuestion && currentOptions.length > 0) {
+              questions.push({
+                text: currentQuestion,
+                options: currentOptions.slice(0, 4)
+              });
+            }
+            currentQuestion = (questionMatch[2] || questionMatch[1] || trimmed).trim();
+            currentOptions = [];
+          } else {
+            let isOption = false;
+            let optionMatch = null;
+            
+            for (const pattern of optionPatterns) {
+              const match = trimmed.match(pattern);
+              if (match) {
+                optionMatch = match;
+                isOption = true;
+                break;
+              }
+            }
+            
+            if (isOption && optionMatch && currentQuestion) {
+              const optionText = (optionMatch[2] || optionMatch[1] || trimmed).trim();
+              if (optionText.length > 1) {
+                currentOptions.push(optionText);
+              }
+            } else if (currentQuestion && currentOptions.length > 0) {
+              // Continue previous option
+              const lastIndex = currentOptions.length - 1;
+              currentOptions[lastIndex] = currentOptions[lastIndex] + ' ' + trimmed;
+            } else if (currentQuestion) {
+              // Continue question text
+              currentQuestion = currentQuestion + ' ' + trimmed;
+            }
+          }
+        }
+        
+        // Save last question
+        if (currentQuestion && currentOptions.length > 0) {
+          questions.push({
+            text: currentQuestion,
+            options: currentOptions.slice(0, 4)
+          });
+        }
+        
+        // If we found questions, return them
+        if (questions.length > 0) {
+          console.log(`✅ Extracted ${questions.length} questions from PDF`);
+          return questions.slice(0, totalQuestions || questions.length);
+        }
+      } catch (textError) {
+        console.error('Error reading PDF text:', textError);
+      }
+      
+      return null;
+    } catch (error) {
+      console.error('Error extracting questions from PDF:', error);
+      return null;
+    }
+  }
+
+  async function beginExam() {
+    const already = results.find((r) => r.examId === exam.id && r.studentId === currentUser.id);
+    if (already) { 
+      setFinished(already); 
+      setShowReview(true);
+      return; 
+    }
+    
+    setAnswers({}); 
+    setQIndex(0); 
+    setSecondsLeft(exam.durationMins * 60); 
+    setStarted(true);
+    setShowReview(false);
+    setIsLoading(true);
+    
+    try {
+      // First, try to load questions from Supabase
+      const { data: questionsData, error: questionsError } = await supabase
+        .from('exam_questions')
+        .select('*')
+        .eq('exam_id', exam.id)
+        .order('question_number');
+      
+      if (questionsData && questionsData.length > 0) {
+        // Questions found in database - use them
+        const parsedQuestions = questionsData.map(q => ({
+          id: q.question_number - 1,
+          text: q.question_text,
+          options: q.options || ['A', 'B', 'C', 'D'],
+          correctAnswer: q.correct_answer
+        }));
+        setQuestions(parsedQuestions);
+        showToast(`✅ Loaded ${parsedQuestions.length} questions from database`, "success");
+      } else {
+        // No questions in database - try to extract from PDF
+        const fileUrl = exam.fileData || examPdfUrls[exam.id];
+        
+        if (fileUrl) {
+          // Try to extract questions from PDF
+          const extractedQuestions = await extractQuestionsFromPDF(fileUrl, exam.totalQuestions);
+          
+          if (extractedQuestions && extractedQuestions.length > 0) {
+            setQuestions(extractedQuestions);
+            showToast(`✅ Extracted ${extractedQuestions.length} questions from PDF`, "success");
+            
+            // Save extracted questions to database for future use
+            try {
+              const questionsToSave = extractedQuestions.map((q, index) => ({
+                exam_id: exam.id,
+                question_number: index + 1,
+                question_text: q.text,
+                options: q.options || ['A', 'B', 'C', 'D'],
+                correct_answer: exam.correctAnswers ? exam.correctAnswers[index] || 0 : 0
+              }));
+              await supabase.from('exam_questions').insert(questionsToSave);
+            } catch (saveError) {
+              console.error('Error saving extracted questions:', saveError);
+            }
+          } else {
+            // Fallback - show instructions to read from PDF
+            const defaultQuestions = [];
+            for (let i = 0; i < exam.totalQuestions; i++) {
+              defaultQuestions.push({
+                id: i,
+                text: `📄 Please read Question ${i + 1} from the PDF viewer above`,
+                options: ['A', 'B', 'C', 'D'],
+                correctAnswer: exam.correctAnswers ? exam.correctAnswers[i] || 0 : 0
+              });
+            }
+            setQuestions(defaultQuestions);
+            showToast("📄 Please read questions from the PDF viewer", "info");
           }
         } else {
-          // Fallback to default questions with instructions
+          // No PDF available - show default questions
           const defaultQuestions = [];
           for (let i = 0; i < exam.totalQuestions; i++) {
             defaultQuestions.push({
               id: i,
-              text: `📄 Please read Question ${i + 1} from the PDF viewer above`,
+              text: `Question ${i + 1}`,
               options: ['A', 'B', 'C', 'D'],
               correctAnswer: exam.correctAnswers ? exam.correctAnswers[i] || 0 : 0
             });
           }
           setQuestions(defaultQuestions);
-          showToast("📄 Please read questions from the PDF viewer", "info");
+          showToast("📄 No question paper found. Using default questions.", "info");
         }
-      } else {
-        // No PDF available - show default questions
-        const defaultQuestions = [];
-        for (let i = 0; i < exam.totalQuestions; i++) {
-          defaultQuestions.push({
-            id: i,
-            text: `Question ${i + 1}`,
-            options: ['A', 'B', 'C', 'D'],
-            correctAnswer: exam.correctAnswers ? exam.correctAnswers[i] || 0 : 0
-          });
-        }
-        setQuestions(defaultQuestions);
-        showToast("📄 No question paper found. Using default questions.", "info");
       }
+    } catch (error) {
+      console.error("Error loading questions:", error);
+      // Fallback to default
+      const defaultQuestions = [];
+      for (let i = 0; i < exam.totalQuestions; i++) {
+        defaultQuestions.push({
+          id: i,
+          text: `Question ${i + 1}`,
+          options: ['A', 'B', 'C', 'D'],
+          correctAnswer: exam.correctAnswers ? exam.correctAnswers[i] || 0 : 0
+        });
+      }
+      setQuestions(defaultQuestions);
+    } finally {
+      setIsLoading(false);
     }
-  } catch (error) {
-    console.error("Error loading questions:", error);
-    // Fallback to default
-    const defaultQuestions = [];
-    for (let i = 0; i < exam.totalQuestions; i++) {
-      defaultQuestions.push({
-        id: i,
-        text: `Question ${i + 1}`,
-        options: ['A', 'B', 'C', 'D'],
-        correctAnswer: exam.correctAnswers ? exam.correctAnswers[i] || 0 : 0
-      });
-    }
-    setQuestions(defaultQuestions);
-  } finally {
-    setIsLoading(false);
   }
-}
-  
-      
+
   function selectAnswer(oi) { 
     setAnswers({ ...answers, [qIndex]: oi }); 
   }
@@ -1910,35 +2020,58 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
           ))}
         </div>
 
-        {/* PDF Viewer - Show if file exists */}
+        {/* PDF Viewer - Always visible so students can read questions */}
         {exam.fileData && (
           <div style={{ marginBottom: 16 }}>
-            <details style={{ cursor: "pointer" }}>
-              <summary style={{ 
+            <div style={{ 
+              display: "flex", 
+              justifyContent: "space-between", 
+              alignItems: "center",
+              marginBottom: 8,
+              background: "var(--primary)",
+              color: "#fff",
+              padding: "8px 14px",
+              borderRadius: "8px 8px 0 0"
+            }}>
+              <span style={{ fontWeight: 600, fontSize: 14 }}>
+                📄 Question Paper ({exam.fileType || 'PDF'})
+                {isLoading && <span style={{ marginLeft: 8, fontSize: 12, opacity: 0.8 }}>⏳ loading...</span>}
+              </span>
+              <span style={{ fontSize: 12, opacity: 0.8 }}>
+                Read questions from this PDF
+              </span>
+            </div>
+            <div className="card" style={{ 
+              overflow: "hidden", 
+              padding: 0,
+              borderRadius: "0 0 8px 8px",
+              borderTop: "none",
+              minHeight: 350
+            }}>
+              <iframe 
+                title="question-paper" 
+                src={exam.fileData}
+                className="pdf-frame" 
+                style={{ 
+                  height: 450, 
+                  width: "100%",
+                  border: "none",
+                  background: "#f5f5f0"
+                }}
+              />
+              <div style={{ 
                 padding: "8px 14px", 
                 background: "var(--paper)", 
-                borderRadius: "8px",
-                fontWeight: 600,
-                fontSize: 13,
-                color: "var(--ink-soft)"
+                fontSize: 11, 
+                color: "var(--muted)",
+                borderTop: "1px solid var(--line)",
+                display: "flex",
+                justifyContent: "space-between"
               }}>
-                📄 View Question Paper PDF (for reference)
-              </summary>
-              <div style={{ marginTop: 8 }}>
-                <iframe 
-                  title="question-paper" 
-                  src={exam.fileData}
-                  className="pdf-frame" 
-                  style={{ 
-                    height: 300, 
-                    width: "100%",
-                    border: "1px solid var(--line)",
-                    borderRadius: "8px",
-                    background: "#f5f5f0"
-                  }}
-                />
+                <span>📌 Scroll through the PDF to read all questions</span>
+                <span>{exam.fileName || "Question Paper"}</span>
               </div>
-            </details>
+            </div>
           </div>
         )}
 
