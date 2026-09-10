@@ -458,9 +458,15 @@ export default function App() {
           {tab === "attendance" && ["admin", "faculty"].includes(currentUser.role) && (
             <AttendanceTab students={students} attendance={attendance} setAttendance={persistAttendance} showToast={showToast} />
           )}
-          {tab === "results" && (
-            <ResultsTab exams={exams} results={results} currentUser={currentUser} />
-          )}
+         {tab === "results" && (
+  <ResultsTab 
+    exams={exams} 
+    results={results} 
+    setResults={persistResults} 
+    currentUser={currentUser} 
+    showToast={showToast} 
+  />
+)}
           {tab === "admin" && currentUser.role === "admin" && (
             <AdminPanel settings={settings} setSettings={persistSettings} adminCreds={adminCreds}
               setAdminCreds={persistAdminCreds} facultyAccounts={facultyAccounts}
