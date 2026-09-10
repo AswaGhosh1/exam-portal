@@ -269,28 +269,57 @@ export default function App() {
       try {
         console.log('🔄 Loading data from Supabase...');
         
-        const [studentsResult, facultyResult, examsResult] = await Promise.all([
+        const [studentsResult, facultyResult, examsResult, resultsResult] = await Promise.all([
           supabase.from('students').select('*'),
           supabase.from('faculty_accounts').select('*'),
-          supabase.from('exams').select('*')
+          supabase.from('exams').select('*'),
+          supabase.from('results').select('*')
         ]);
         
         console.log('📊 Supabase students:', studentsResult.data?.length || 0);
         console.log('📊 Supabase faculty:', facultyResult.data?.length || 0);
         console.log('📊 Supabase exams:', examsResult.data?.length || 0);
+        console.log('📊 Supabase results:', resultsResult.data?.length || 0);
         
         const finalStudents = studentsResult.data?.length > 0 ? studentsResult.data : DEMO_STUDENTS;
         const finalFaculty = facultyResult.data?.length > 0 ? facultyResult.data : DEMO_FACULTY;
         
+        // Map Supabase results to app format
+        const finalResults = resultsResult.data?.length > 0
+          ? resultsResult.data.map(r => ({
+              id: r.id,
+              examId: r.exam_id,
+              examTitle: r.exam_title,
+              studentId: r.student_id,
+              studentName: r.student_name,
+              score: r.score,
+              total: r.total,
+              submittedAt: r.submitted_at,
+              questionResults: r.question_results
+            }))
+          : [];
+        
+        // Load localStorage results as fallback
+        const localResults = await loadKey(STORAGE_KEYS.results, []);
+        
+        // Merge results (Supabase takes priority, but include local-only results)
+        const mergedResults = [...finalResults];
+        const supabaseIds = new Set(finalResults.map(r => r.id));
+        localResults.forEach(r => {
+          if (!supabaseIds.has(r.id)) {
+            mergedResults.push(r);
+          }
+        });
+        
         setStudents(finalStudents);
         setFacultyAccounts(finalFaculty);
         setExams(examsResult.data || []);
+        setResults(mergedResults);
         
-        const [n, e, a, r, no, ac, se] = await Promise.all([
+        const [n, e, a, no, ac, se] = await Promise.all([
           loadKey(STORAGE_KEYS.notes, []),
           loadKey(STORAGE_KEYS.exams, []),
           loadKey(STORAGE_KEYS.attendance, {}),
-          loadKey(STORAGE_KEYS.results, []),
           loadKey(STORAGE_KEYS.notifications, []),
           loadKey(STORAGE_KEYS.adminCreds, DEFAULT_ADMIN),
           loadKey(STORAGE_KEYS.settings, DEFAULT_SETTINGS),
@@ -298,17 +327,21 @@ export default function App() {
         
         setNotes(n);
         setAttendance(a);
-        setResults(r);
         setNotifications(no);
         setAdminCreds(ac);
         setSettings(se);
         setLoading(false);
         
-        console.log('✅ Final - Students:', finalStudents.length, 'Faculty:', finalFaculty.length, 'Exams:', examsResult.data?.length || 0);
+        console.log('✅ Final - Students:', finalStudents.length, 'Faculty:', finalFaculty.length, 'Exams:', examsResult.data?.length || 0, 'Results:', mergedResults.length);
       } catch (error) {
         console.error('❌ Error loading data:', error);
         setStudents(DEMO_STUDENTS);
         setFacultyAccounts(DEMO_FACULTY);
+        
+        // Load from localStorage on error
+        const localResults = await loadKey(STORAGE_KEYS.results, []);
+        setResults(localResults);
+        
         setLoading(false);
       }
     };
@@ -1333,8 +1366,8 @@ function ExamsTab({ exams, setExams, students, notifications, setNotifications, 
         correctAnswers: answerKey,
         fileName: file.name,
         fileType: fileType,
-        fileUrl: publicUrl,  // Store the public URL
-        fileData: null,      // Don't store base64
+        fileUrl: publicUrl,
+        fileData: null,
         notified: false,
         createdAt: new Date().toISOString()
       };
@@ -1590,7 +1623,6 @@ function ExamsTab({ exams, setExams, students, notifications, setNotifications, 
 
           <div className="divider" />
           
-          {/* Upload Progress */}
           {isSaving && uploadProgress > 0 && uploadProgress < 100 && (
             <div style={{ marginBottom: 12 }}>
               <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 4 }}>
@@ -1741,11 +1773,9 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
     try {
       console.log('📄 Attempting to extract questions from file...');
       
-      // Fetch the file from Supabase Storage
       const response = await fetch(fileUrl);
       const arrayBuffer = await response.arrayBuffer();
       
-      // Use mammoth to extract text from DOC
       const result = await mammoth.extractRawText({ arrayBuffer: arrayBuffer });
       const text = result.value;
       
@@ -1756,22 +1786,18 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
         return null;
       }
       
-      // Parse questions from text
       const questions = [];
       const lines = text.split('\n');
       
       let currentQuestion = null;
       let currentOptions = [];
-      let foundQuestions = false;
       
-      // Patterns for questions (Q1., Q2., 1., 2., Question 1, etc.)
       const questionPatterns = [
         /^Q(\d+)[\.\)]\s*(.+)/i,
         /^(\d+)[\.\)]\s*(.+)/,
         /^Question\s*(\d+)[\.\)]\s*(.+)/i,
       ];
       
-      // Patterns for options (A., B., C., D.)
       const optionPatterns = [
         /^([A-D])[\.\)]\s*(.+)/,
         /^([a-d])[\.\)]\s*(.+)/,
@@ -1790,13 +1816,11 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
           if (match) {
             questionMatch = match;
             isQuestion = true;
-            foundQuestions = true;
             break;
           }
         }
         
         if (isQuestion && questionMatch) {
-          // Save previous question
           if (currentQuestion && currentOptions.length > 0) {
             questions.push({
               text: currentQuestion,
@@ -1824,17 +1848,14 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
               currentOptions.push(optionText);
             }
           } else if (currentQuestion && currentOptions.length > 0) {
-            // Continue previous option
             const lastIndex = currentOptions.length - 1;
             currentOptions[lastIndex] = currentOptions[lastIndex] + ' ' + trimmed;
           } else if (currentQuestion) {
-            // Continue question text
             currentQuestion = currentQuestion + ' ' + trimmed;
           }
         }
       }
       
-      // Save last question
       if (currentQuestion && currentOptions.length > 0) {
         questions.push({
           text: currentQuestion,
@@ -1872,7 +1893,6 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
     try {
       console.log('🔍 Loading questions for exam:', exam.id);
       
-      // First, try to load questions from Supabase database
       const { data: questionsData, error: questionsError } = await supabase
         .from('exam_questions')
         .select('*')
@@ -1882,7 +1902,6 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
       console.log('📊 Questions from DB:', questionsData);
       
       if (questionsData && questionsData.length > 0) {
-        // Questions found in database - use them
         const parsedQuestions = questionsData.map(q => ({
           id: q.question_number - 1,
           text: q.question_text || `Question ${q.question_number}`,
@@ -1896,20 +1915,16 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
         return;
       }
       
-      // No questions in database - try to extract from the uploaded file
       console.log('📄 No questions in DB, trying to extract from file...');
       
-      // Get the file URL from the exam
       const fileUrl = exam.fileData || exam.fileUrl || examPdfUrls[exam.id];
       
       if (fileUrl) {
         console.log('📄 File URL found:', fileUrl);
         
-        // Extract questions from the file
         const extractedQuestions = await extractQuestionsFromFile(fileUrl, exam.totalQuestions);
         
         if (extractedQuestions && extractedQuestions.length > 0) {
-          // Add correctAnswer from exam.correctAnswers if available
           const questionsWithAnswers = extractedQuestions.map((q, index) => ({
             ...q,
             correctAnswer: exam.correctAnswers ? exam.correctAnswers[index] || 0 : 0
@@ -1919,7 +1934,6 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
           showToast(`✅ Extracted ${questionsWithAnswers.length} questions from file`, "success");
           console.log('✅ Questions extracted from file:', questionsWithAnswers);
           
-          // Save extracted questions to database for future use
           try {
             const questionsToSave = questionsWithAnswers.map((q, index) => ({
               exam_id: exam.id,
@@ -1951,7 +1965,6 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
         console.log('⚠️ No file URL found for this exam');
       }
       
-      // Fallback: Create default questions
       console.log('📄 Using default questions as fallback');
       const defaultQuestions = [];
       for (let i = 0; i < exam.totalQuestions; i++) {
@@ -1986,8 +1999,10 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
     setAnswers({ ...answers, [qIndex]: oi }); 
   }
 
-  function submitExam() {
+  // ============ FIXED SUBMIT FUNCTION ============
+  async function submitExam() {
     if (finished) return;
+    
     let score = 0;
     const questionResults = [];
     
@@ -2021,9 +2036,40 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
       submittedAt: new Date().toISOString(),
       questionResults: questionResults
     };
+    
+    // Save to localStorage (immediate state update)
     const updated = [...results, rec];
     setResults(updated);
     saveKey(STORAGE_KEYS.results, updated);
+    
+    // ============ NEW: Save to Supabase ============
+    try {
+      const { data, error } = await supabase
+        .from('results')
+        .insert([{
+          id: rec.id,
+          exam_id: rec.examId,
+          exam_title: rec.examTitle,
+          student_id: rec.studentId,
+          student_name: rec.studentName,
+          score: rec.score,
+          total: rec.total,
+          submitted_at: rec.submittedAt,
+          question_results: rec.questionResults
+        }])
+        .select();
+      
+      if (error) {
+        console.error('❌ Error saving result to Supabase:', error);
+        showToast('Result saved locally (cloud sync failed)', 'error');
+      } else {
+        console.log('✅ Result saved to Supabase:', data);
+      }
+    } catch (error) {
+      console.error('❌ Error saving result:', error);
+    }
+    // ============================================
+    
     setFinished(rec); 
     setStarted(false);
     setShowConfirmFinish(false);
@@ -2252,10 +2298,6 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
 
     const currentQuestion = currentQuestions[qIndex] || currentQuestions[0];
 
-    // Debug: Log current question
-    console.log('📝 Current question:', currentQuestion);
-    console.log('📝 All questions:', currentQuestions);
-
     return (
       <div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
@@ -2272,14 +2314,12 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
           <div className={`timer-badge ${low ? "low" : ""}`}><Timer size={16} /> {pad(mm)}:{pad(ss)}</div>
         </div>
 
-        {/* Question Progress Dots */}
         <div className="q-progress">
           {Array.from({ length: exam.totalQuestions }).map((_, i) => (
             <div key={i} className={`q-dot ${i === qIndex ? "current" : answers[i] !== undefined ? "answered" : ""}`} onClick={() => setQIndex(i)}>{i + 1}</div>
           ))}
         </div>
 
-        {/* QUESTION - Displayed inline */}
         <div className="card" style={{ maxWidth: 800, margin: "0 auto" }}>
           <div style={{ fontWeight: 600, marginBottom: 12, fontSize: 18 }}>
             Question {qIndex + 1}
@@ -2290,7 +2330,6 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
             )}
           </div>
           
-          {/* Question Text */}
           <div style={{ 
             marginBottom: 20, 
             padding: 16, 
@@ -2304,7 +2343,6 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
             {currentQuestion.text || `Question ${qIndex + 1}`}
           </div>
           
-          {/* Options */}
           <div style={{ fontWeight: 600, marginBottom: 12, fontSize: 14, color: "var(--muted)" }}>Select your answer:</div>
           {currentQuestion.options && currentQuestion.options.length > 0 ? (
             currentQuestion.options.map((option, oi) => {
@@ -2333,7 +2371,6 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
           </div>
         </div>
 
-        {/* Navigation Buttons */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 16 }}>
           <div style={{ display: "flex", gap: 8 }}>
             <button className="btn btn-outline" disabled={qIndex === 0} onClick={() => setQIndex(qIndex - 1)}>
@@ -2360,7 +2397,6 @@ function TakeExamTab({ exams, results, setResults, examPdfUrls, currentUser, sho
           </div>
         </div>
 
-        {/* Confirmation Dialog */}
         {showConfirmFinish && (
           <div style={{
             position: "fixed",
@@ -2521,7 +2557,7 @@ function AttendanceTab({ students, attendance, setAttendance, showToast }) {
                 const st = dayRecord[s.id];
                 return (
                   <tr key={s.id}>
-                    <td style={{ fontWeight: 600 }}>{s.name}</td><td>{s.email}</td>
+                    <td style={{ fontWeight: 600 }}>{s.name}</td><td>{s.email || s.username}</td>
                     <td>
                       <div style={{ display: "flex", gap: 6 }}>
                         <button className={`btn btn-sm ${st === "present" ? "btn-primary" : "btn-outline"}`} onClick={() => setStatus(s.id, "present")}><Check size={12} /> Present</button>
@@ -2568,11 +2604,23 @@ function ResultsTab({ exams, results, currentUser }) {
   const [showDetailedView, setShowDetailedView] = useState(false);
   const isStudent = currentUser.role === "student";
 
+  // Debug logging
+  console.log('🔍 ResultsTab Debug:', {
+    currentUser: currentUser,
+    currentUserId: currentUser.id,
+    allResultsCount: results.length,
+    allResults: results,
+    studentResults: results.filter(r => r.studentId === currentUser.id),
+    isStudent: isStudent
+  });
+
   const filtered = results
     .filter((r) => (isStudent ? r.studentId === currentUser.id : true))
     .filter((r) => examId === "all" || r.examId === examId)
     .filter((r) => isStudent || r.studentName.toLowerCase().includes(search.toLowerCase()))
     .sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
+
+  console.log('🔍 Filtered results:', filtered);
 
   const getExamForResult = (result) => {
     return exams.find(e => e.id === result.examId);
@@ -2601,7 +2649,6 @@ function ResultsTab({ exams, results, currentUser }) {
     const exam = getExamForResult(selectedResult);
     const questions = getQuestionsForExam(exam);
     const totalQuestions = selectedResult.total || questions.length;
-    const correctAnswers = selectedResult.questionResults || [];
     
     return (
       <div>
@@ -2766,7 +2813,15 @@ function ResultsTab({ exams, results, currentUser }) {
         </div>
 
         {filtered.length === 0 ? (
-          <div className="empty"><Award size={30} /><div>No results yet — scores will appear here once exams are completed.</div></div>
+          <div className="empty">
+            <Award size={30} />
+            <div>No results yet — scores will appear here once exams are completed.</div>
+            {isStudent && (
+              <div style={{ fontSize: 12, marginTop: 8, color: "var(--muted)" }}>
+                (Total results in system: {results.length} | Your ID: {currentUser.id})
+              </div>
+            )}
+          </div>
         ) : (
           <table>
             <thead>
@@ -3004,7 +3059,6 @@ Data is stored in your browser's localStorage.
         </div>
       </div>
 
-      {/* Backup & Data Management */}
       <div className="card">
         <div style={{ fontWeight: 600, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
           <Shield size={16} /> Data Management & Backup
