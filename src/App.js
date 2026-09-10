@@ -2595,32 +2595,24 @@ function AttendanceTab({ students, attendance, setAttendance, showToast }) {
   );
 }
 
+
 /* ---------------------------------- Results ---------------------------------- */
 
-function ResultsTab({ exams, results, currentUser }) {
+function ResultsTab({ exams, results, setResults, currentUser, showToast }) {
   const [examId, setExamId] = useState("all");
   const [search, setSearch] = useState("");
   const [selectedResult, setSelectedResult] = useState(null);
   const [showDetailedView, setShowDetailedView] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   const isStudent = currentUser.role === "student";
-
-  // Debug logging
-  console.log('🔍 ResultsTab Debug:', {
-    currentUser: currentUser,
-    currentUserId: currentUser.id,
-    allResultsCount: results.length,
-    allResults: results,
-    studentResults: results.filter(r => r.studentId === currentUser.id),
-    isStudent: isStudent
-  });
+  const isAdmin = currentUser.role === "admin";
 
   const filtered = results
     .filter((r) => (isStudent ? r.studentId === currentUser.id : true))
     .filter((r) => examId === "all" || r.examId === examId)
     .filter((r) => isStudent || r.studentName.toLowerCase().includes(search.toLowerCase()))
     .sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
-
-  console.log('🔍 Filtered results:', filtered);
 
   const getExamForResult = (result) => {
     return exams.find(e => e.id === result.examId);
@@ -2645,11 +2637,116 @@ function ResultsTab({ exams, results, currentUser }) {
     setSelectedResult(null);
   };
 
+  // ============ DELETE SINGLE RESULT ============
+  async function deleteResult(resultId) {
+    setIsDeleting(true);
+    try {
+      // Delete from Supabase
+      const { error } = await supabase
+        .from('results')
+        .delete()
+        .eq('id', resultId);
+
+      if (error) {
+        console.error('❌ Supabase delete error:', error);
+        // Continue anyway to delete locally
+      } else {
+        console.log('✅ Deleted from Supabase:', resultId);
+      }
+
+      // Delete from local state
+      const updated = results.filter(r => r.id !== resultId);
+      setResults(updated);
+      await saveKey(STORAGE_KEYS.results, updated);
+
+      showToast("Result deleted successfully.", "success");
+      setDeleteConfirm(null);
+    } catch (error) {
+      console.error('❌ Delete error:', error);
+      showToast("Failed to delete result: " + error.message, "error");
+    } finally {
+      setIsDeleting(false);
+    }
+  }
+
+  // ============ DELETE ALL RESULTS FOR AN EXAM ============
+  async function deleteAllForExam(examIdToDelete) {
+    const toDelete = results.filter(r => r.examId === examIdToDelete);
+    if (toDelete.length === 0) {
+      showToast("No results to delete for this exam.", "error");
+      return;
+    }
+
+    setIsDeleting(true);
+    try {
+      // Delete from Supabase
+      const { error } = await supabase
+        .from('results')
+        .delete()
+        .eq('exam_id', examIdToDelete);
+
+      if (error) {
+        console.error('❌ Supabase bulk delete error:', error);
+      } else {
+        console.log('✅ Bulk deleted from Supabase for exam:', examIdToDelete);
+      }
+
+      // Delete from local state
+      const updated = results.filter(r => r.examId !== examIdToDelete);
+      setResults(updated);
+      await saveKey(STORAGE_KEYS.results, updated);
+
+      showToast(`Deleted ${toDelete.length} result(s) for this exam.`, "success");
+      setDeleteConfirm(null);
+    } catch (error) {
+      console.error('❌ Bulk delete error:', error);
+      showToast("Failed to delete results: " + error.message, "error");
+    } finally {
+      setIsDeleting(false);
+    }
+  }
+
+  // ============ DELETE ALL RESULTS (admin only) ============
+  async function deleteAllResults() {
+    if (results.length === 0) {
+      showToast("No results to delete.", "error");
+      return;
+    }
+
+    setIsDeleting(true);
+    try {
+      // Delete all from Supabase
+      const { error } = await supabase
+        .from('results')
+        .delete()
+        .neq('id', '___never_matches___'); // Deletes all rows
+
+      if (error) {
+        console.error('❌ Supabase delete-all error:', error);
+      } else {
+        console.log('✅ All results deleted from Supabase');
+      }
+
+      // Clear local state
+      setResults([]);
+      await saveKey(STORAGE_KEYS.results, []);
+
+      showToast("All results deleted.", "success");
+      setDeleteConfirm(null);
+    } catch (error) {
+      console.error('❌ Delete-all error:', error);
+      showToast("Failed to delete all results: " + error.message, "error");
+    } finally {
+      setIsDeleting(false);
+    }
+  }
+
+  // ============ DETAILED VIEW ============
   if (showDetailedView && selectedResult) {
     const exam = getExamForResult(selectedResult);
     const questions = getQuestionsForExam(exam);
     const totalQuestions = selectedResult.total || questions.length;
-    
+
     return (
       <div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
@@ -2657,13 +2754,27 @@ function ResultsTab({ exams, results, currentUser }) {
             <div className="page-title font-display" style={{ fontSize: 22 }}>Answer Review</div>
             <div className="page-sub">{selectedResult.examTitle}</div>
           </div>
-          <button className="btn btn-outline" onClick={closeDetailedView}>
-            <ChevronLeft size={15} /> Back to Results
-          </button>
+          <div style={{ display: "flex", gap: 8 }}>
+            {isAdmin && (
+              <button
+                className="btn btn-danger"
+                onClick={() => setDeleteConfirm({ type: 'single', resultId: selectedResult.id, title: selectedResult.examTitle, student: selectedResult.studentName })}
+              >
+                <Trash2 size={15} /> Delete This Result
+              </button>
+            )}
+            <button className="btn btn-outline" onClick={closeDetailedView}>
+              <ChevronLeft size={15} /> Back to Results
+            </button>
+          </div>
         </div>
 
         <div className="card" style={{ marginBottom: 16 }}>
           <div style={{ display: "flex", gap: 30, flexWrap: "wrap" }}>
+            <div>
+              <div style={{ fontSize: 12, color: "var(--muted)" }}>Student</div>
+              <div style={{ fontSize: 16, fontWeight: 600 }}>{selectedResult.studentName}</div>
+            </div>
             <div>
               <div style={{ fontSize: 12, color: "var(--muted)" }}>Score</div>
               <div style={{ fontSize: 20, fontWeight: 700 }}>{selectedResult.score} / {selectedResult.total}</div>
@@ -2689,8 +2800,8 @@ function ResultsTab({ exams, results, currentUser }) {
 
         <div style={{ maxHeight: "500px", overflowY: "auto" }}>
           {Array.from({ length: totalQuestions }).map((_, index) => {
-            const userAnswer = selectedResult.questionResults && selectedResult.questionResults[index] 
-              ? selectedResult.questionResults[index].userAnswer 
+            const userAnswer = selectedResult.questionResults && selectedResult.questionResults[index]
+              ? selectedResult.questionResults[index].userAnswer
               : undefined;
             const correctAnswer = selectedResult.questionResults && selectedResult.questionResults[index]
               ? selectedResult.questionResults[index].correctAnswer
@@ -2699,7 +2810,7 @@ function ResultsTab({ exams, results, currentUser }) {
               ? selectedResult.questionResults[index].isCorrect
               : (userAnswer !== undefined && userAnswer === correctAnswer);
             const question = questions[index] || { text: `Question ${index + 1}`, options: ['A', 'B', 'C', 'D'] };
-            
+
             return (
               <div key={index} className="card-plain" style={{ marginBottom: 12 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
@@ -2732,11 +2843,11 @@ function ResultsTab({ exams, results, currentUser }) {
                     )}
                   </div>
                 </div>
-                
+
                 <div style={{ fontSize: 14, color: "var(--ink-soft)", marginBottom: 8 }}>
                   {question.text}
                 </div>
-                
+
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
                   {question.options && question.options.map((option, oi) => {
                     const letter = LETTERS[oi] || String.fromCharCode(65 + oi);
@@ -2745,7 +2856,7 @@ function ResultsTab({ exams, results, currentUser }) {
                     let bgColor = "transparent";
                     let borderColor = "var(--line)";
                     let textColor = "var(--ink)";
-                    
+
                     if (isUserAnswer && isCorrectAnswer) {
                       bgColor = "rgba(63,122,93,0.15)";
                       borderColor = "var(--success)";
@@ -2758,7 +2869,7 @@ function ResultsTab({ exams, results, currentUser }) {
                       bgColor = "rgba(63,122,93,0.08)";
                       borderColor = "var(--success)";
                     }
-                    
+
                     return (
                       <div key={oi} style={{
                         padding: "6px 12px",
@@ -2787,28 +2898,73 @@ function ResultsTab({ exams, results, currentUser }) {
         <button className="btn btn-primary" style={{ marginTop: 16 }} onClick={closeDetailedView}>
           <ChevronLeft size={15} /> Back to Results
         </button>
+
+        {/* Delete confirmation modal */}
+        {deleteConfirm && (
+          <DeleteConfirmModal
+            deleteConfirm={deleteConfirm}
+            isDeleting={isDeleting}
+            onCancel={() => setDeleteConfirm(null)}
+            onConfirm={() => deleteResult(deleteConfirm.resultId)}
+          />
+        )}
       </div>
     );
   }
 
+  // ============ MAIN RESULTS LIST ============
   return (
     <div>
       <div className="page-title font-display">Results</div>
-      <div className="page-sub">{isStudent ? "Your marks across mock tests." : "Marks scored by students across all mock tests."}</div>
+      <div className="page-sub">
+        {isStudent ? "Your marks across mock tests." : "Marks scored by students across all mock tests."}
+      </div>
 
       <div className="card-plain">
-        <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
           <select value={examId} onChange={(e) => setExamId(e.target.value)} style={{ maxWidth: 260 }}>
             <option value="all">All exams</option>
             {exams.map((e) => <option key={e.id} value={e.id}>{e.title}</option>)}
           </select>
           {!isStudent && (
-            <input 
-              placeholder="Search student…" 
-              value={search} 
-              onChange={(e) => setSearch(e.target.value)} 
-              style={{ maxWidth: 220 }} 
+            <input
+              placeholder="Search student…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              style={{ maxWidth: 220 }}
             />
+          )}
+
+          <div style={{ flex: 1 }} />
+
+          {/* Admin delete buttons */}
+          {isAdmin && (
+            <div style={{ display: "flex", gap: 8 }}>
+              {examId !== "all" && (
+                <button
+                  className="btn btn-danger btn-sm"
+                  onClick={() => {
+                    const exam = exams.find(e => e.id === examId);
+                    setDeleteConfirm({
+                      type: 'exam',
+                      examId: examId,
+                      title: exam ? exam.title : "this exam",
+                      count: results.filter(r => r.examId === examId).length
+                    });
+                  }}
+                  disabled={results.filter(r => r.examId === examId).length === 0}
+                >
+                  <Trash2 size={13} /> Delete Results for This Exam
+                </button>
+              )}
+              <button
+                className="btn btn-danger btn-sm"
+                onClick={() => setDeleteConfirm({ type: 'all', count: results.length })}
+                disabled={results.length === 0}
+              >
+                <Trash2 size={13} /> Delete All Results
+              </button>
+            </div>
           )}
         </div>
 
@@ -2816,11 +2972,6 @@ function ResultsTab({ exams, results, currentUser }) {
           <div className="empty">
             <Award size={30} />
             <div>No results yet — scores will appear here once exams are completed.</div>
-            {isStudent && (
-              <div style={{ fontSize: 12, marginTop: 8, color: "var(--muted)" }}>
-                (Total results in system: {results.length} | Your ID: {currentUser.id})
-              </div>
-            )}
           </div>
         ) : (
           <table>
@@ -2831,7 +2982,7 @@ function ResultsTab({ exams, results, currentUser }) {
                 <th>Score</th>
                 <th>%</th>
                 <th>Submitted</th>
-                {isStudent && <th>Actions</th>}
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -2848,31 +2999,131 @@ function ResultsTab({ exams, results, currentUser }) {
                       </span>
                     </td>
                     <td style={{ color: "var(--muted)" }}>{fmtDateTime(r.submittedAt)}</td>
-                    {isStudent && (
-                      <td>
-                        <button 
-                          className="btn btn-primary btn-sm" 
+                    <td>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <button
+                          className="btn btn-primary btn-sm"
                           onClick={() => handleViewDetails(r)}
-                          style={{ 
-                            background: "var(--primary)", 
-                            color: "#fff", 
-                            padding: "4px 12px",
+                          style={{
+                            background: "var(--primary)",
+                            color: "#fff",
+                            padding: "4px 10px",
                             borderRadius: "6px",
                             border: "none",
                             cursor: "pointer",
                             fontSize: "12px"
                           }}
                         >
-                          <BookOpen size={13} style={{ marginRight: 4 }} /> Review Answers
+                          <BookOpen size={13} style={{ marginRight: 4 }} /> Review
                         </button>
-                      </td>
-                    )}
+                        {isAdmin && (
+                          <button
+                            className="btn btn-danger btn-sm"
+                            onClick={() => setDeleteConfirm({
+                              type: 'single',
+                              resultId: r.id,
+                              title: r.examTitle,
+                              student: r.studentName
+                            })}
+                            style={{ padding: "4px 8px" }}
+                            title="Delete this result"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        )}
+                      </div>
+                    </td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
         )}
+
+        {isAdmin && filtered.length > 0 && (
+          <div style={{ marginTop: 14, fontSize: 12, color: "var(--muted)", textAlign: "right" }}>
+            Showing {filtered.length} of {results.length} total results
+          </div>
+        )}
+      </div>
+
+      {/* Delete confirmation modal */}
+      {deleteConfirm && (
+        <DeleteConfirmModal
+          deleteConfirm={deleteConfirm}
+          isDeleting={isDeleting}
+          onCancel={() => setDeleteConfirm(null)}
+          onConfirm={() => {
+            if (deleteConfirm.type === 'single') {
+              deleteResult(deleteConfirm.resultId);
+            } else if (deleteConfirm.type === 'exam') {
+              deleteAllForExam(deleteConfirm.examId);
+            } else if (deleteConfirm.type === 'all') {
+              deleteAllResults();
+            }
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ---------------------------------- Delete Confirm Modal ---------------------------------- */
+
+function DeleteConfirmModal({ deleteConfirm, isDeleting, onCancel, onConfirm }) {
+  let title = "Delete Result?";
+  let message = "";
+
+  if (deleteConfirm.type === 'single') {
+    title = "Delete This Result?";
+    message = `This will permanently delete the result for "${deleteConfirm.student}" on "${deleteConfirm.title}". This action cannot be undone.`;
+  } else if (deleteConfirm.type === 'exam') {
+    title = "Delete All Results for This Exam?";
+    message = `This will permanently delete ${deleteConfirm.count} result(s) for "${deleteConfirm.title}". This action cannot be undone.`;
+  } else if (deleteConfirm.type === 'all') {
+    title = "Delete ALL Results?";
+    message = `This will permanently delete ALL ${deleteConfirm.count} result(s) across every exam. This action cannot be undone.`;
+  }
+
+  return (
+    <div style={{
+      position: "fixed",
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      background: "rgba(0,0,0,0.5)",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      zIndex: 1000
+    }}>
+      <div className="card" style={{ maxWidth: 440, margin: "20px" }}>
+        <div style={{ textAlign: "center", marginBottom: 16 }}>
+          <AlertTriangle size={40} color="var(--danger)" />
+          <h3 style={{ marginTop: 10, color: "var(--danger)" }}>{title}</h3>
+          <p style={{ color: "var(--ink-soft)", fontSize: 13.5, marginTop: 8, lineHeight: 1.5 }}>
+            {message}
+          </p>
+        </div>
+        <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+          <button
+            className="btn btn-outline"
+            onClick={onCancel}
+            disabled={isDeleting}
+          >
+            Cancel
+          </button>
+          <button
+            className="btn btn-danger"
+            onClick={onConfirm}
+            disabled={isDeleting}
+            style={{ background: "var(--danger)", color: "#fff" }}
+          >
+            {isDeleting ? <RefreshCw size={15} /> : <Trash2 size={15} />}
+            {isDeleting ? " Deleting..." : " Yes, Delete"}
+          </button>
+        </div>
       </div>
     </div>
   );
